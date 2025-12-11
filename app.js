@@ -6,7 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
-const PQueue = require("p-queue"); // npm i p-queue
+const PQueue = require("p-queue").default; // FIX: use .default
 require("dotenv").config();
 
 // ============================
@@ -31,7 +31,7 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 // ============================
 // QUEUE SYSTEM: Limit concurrent downloads
 // ============================
-const queue = new PQueue({ concurrency: 2 }); // Change concurrency if needed
+const queue = new PQueue({ concurrency: 2 }); // Adjust concurrency if needed
 
 // ============================
 // /start COMMAND
@@ -104,7 +104,7 @@ async function handleDownload(chatId, text) {
     });
 
     await bot.deleteMessage(chatId, sendingMsg.message_id);
-    await bot.sendVideo(chatId, filePath, { caption: "✅ Video downloaded successfully!" });
+    await bot.sendVideo(chatId, filePath);
 
     fs.unlinkSync(filePath); // Cleanup
 
