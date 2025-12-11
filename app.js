@@ -3,39 +3,40 @@ const axios = require("axios");
 const express = require("express");
 require("dotenv").config();
 
-// Bot setup (webhook mode)
+// Bot setup (webhook mode ONLY)
 const TOKEN = process.env.TOKEN;
-const bot = new TelegramBot(TOKEN); // no polling
+const bot = new TelegramBot(TOKEN, { webHook: true });
 
 // Express server
 const app = express();
-app.use(express.json()); // parse JSON
+app.use(express.json()); // Important for webhooks!
 
-// Ping route for UptimeRobot
+// Ping route
 app.get("/", (req, res) => res.send("🐰 Bot is alive!"));
 
-// Telegram webhook endpoint
+// Webhook endpoint (CRITICAL FIX)
 app.post(`/bot${TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-// Start server
+// Start express server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Web server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Web server running on port ${PORT}`));
 
-// Set webhook
-bot.setWebHook(`https://tiktok-video-downloader-vlrj.onrender.com/bot${TOKEN}`); // replace with your Render/Railway URL
+// Set the webhook (VERY IMPORTANT)
+const WEBHOOK_URL = `https://tiktok-video-downloader-vlrj.onrender.com/bot${TOKEN}`;
+bot.setWebHook(WEBHOOK_URL);
 
 // /start command
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
-    "🐰 Send me a TikTok link and I will download the video for you!"
+    "🐰 Send me any TikTok link and I will download the video for you!"
   );
 });
 
-// Helper: expand short TikTok URLs
+// Expand short TikTok URLs
 async function expandUrl(shortUrl) {
   try {
     const res = await axios.get(shortUrl, {
@@ -48,7 +49,7 @@ async function expandUrl(shortUrl) {
   }
 }
 
-// Helper: fetch API with retry
+// Retry wrapper
 async function fetchWithRetry(url, retries = 3, delay = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
@@ -60,61 +61,51 @@ async function fetchWithRetry(url, retries = 3, delay = 2000) {
   }
 }
 
-// Main handler
+// MAIN video downloader
 bot.on("message", async (msg) => {
   const text = msg.text;
   const chatId = msg.chat.id;
+
   if (!text || !text.includes("tiktok.com")) return;
 
-  // Send "Downloading..." message
-  let progressMsg;
-  try {
-    progressMsg = await bot.sendMessage(chatId, "⏳ Downloading video in progress...");
-  } catch (err) {
-    console.error("Error sending progress message:", err);
-  }
+  let loadingMsg = await bot.sendMessage(chatId, "⏳ Downloading video...");
 
   try {
-    const url = await expandUrl(text);
+    const expandedUrl = await expandUrl(text);
 
-    // Call your TikTok downloader API with retry
-    let apiRes;
-    try {
-      apiRes = await fetchWithRetry(
-        `https://tiktok-api-video-downloader.onrender.com/tiktok/api.php?url=${encodeURIComponent(url)}`
-      );
-    } catch {
-      await bot.sendMessage(
-        chatId,
-        "⏳ Server is waking up, please wait a few seconds and try again."
-      );
-      return;
-    }
+    // Call your API
+    const apiRes = await fetchWithRetry(
+      `https://tiktok-api-video-downloader.onrender.com/tiktok/api.php?url=${encodeURIComponent(
+        expandedUrl
+      )}`
+    );
 
     const videoUrl = apiRes.data.video?.[0];
     if (!videoUrl) {
-      await bot.sendMessage(chatId, "❌ Could not fetch video URL.");
+      await bot.sendMessage(chatId, "❌ Cannot fetch video.");
       return;
     }
 
-    // Stream video directly to Telegram
-    const videoRes = await axios({
+    // Download video (stream)
+    const videoStream = await axios({
       url: videoUrl,
       method: "GET",
       responseType: "stream",
       timeout: 60000,
     });
 
-    await bot.sendVideo(chatId, videoRes.data, {
+    await bot.sendVideo(chatId, videoStream.data, {
       filename: `tiktok_${Date.now()}.mp4`,
     });
 
-    // Delete "Downloading..." message
-    if (progressMsg) await bot.deleteMessage(chatId, progressMsg.message_id);
-
+    await bot.deleteMessage(chatId, loadingMsg.message_id);
   } catch (err) {
-    console.error("Processing error:", err);
-    await bot.sendMessage(chatId, "❌ Error processing your TikTok link.");
-    if (progressMsg) await bot.deleteMessage(chatId, progressMsg.message_id);
+    console.error("❌ Error:", err.message);
+
+    await bot.sendMessage(chatId, "❌ Error downloading video. Try again.");
+
+    try {
+      await bot.deleteMessage(chatId, loadingMsg.message_id);
+    } catch {}
   }
 });
