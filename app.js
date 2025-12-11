@@ -1,8 +1,21 @@
+// ============================
+// DEPENDENCIES
+// ============================
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const express = require("express");
+const PQueue = require("p-queue"); // npm i p-queue
 require("dotenv").config();
+
+// ============================
+// EXPRESS SERVER (Optional, prevent Render warnings)
+// ============================
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get("/", (req, res) => res.send("🐰 Telegram TikTok Bot is running!"));
+app.listen(PORT, () => console.log(`Express server listening on port ${PORT}`));
 
 // ============================
 // TELEGRAM BOT SETUP
@@ -13,8 +26,12 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// Polling bot for Railway Worker
 const bot = new TelegramBot(TOKEN, { polling: true });
+
+// ============================
+// QUEUE SYSTEM: Limit concurrent downloads
+// ============================
+const queue = new PQueue({ concurrency: 2 }); // Change concurrency if needed
 
 // ============================
 // /start COMMAND
@@ -44,50 +61,52 @@ async function expandUrl(shortUrl) {
 // ============================
 // MAIN HANDLER
 // ============================
-bot.on("message", async (msg) => {
+bot.on("message", (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
   if (!text || !text.includes("tiktok.com")) return;
 
+  // Add download task to queue
+  queue.add(() => handleDownload(chatId, text));
+});
+
+// ============================
+// DOWNLOAD HANDLER
+// ============================
+async function handleDownload(chatId, text) {
   const sendingMsg = await bot.sendMessage(chatId, "⏳ Downloading TikTok video...");
 
   try {
     const url = await expandUrl(text);
 
-    // TikWM API (no rate limit, free)
+    // TikWM API
     const apiRes = await axios.get("https://tikwm.com/api/", { params: { url } });
     if (!apiRes.data?.data?.play) throw new Error("Cannot fetch video URL");
 
     const videoUrl = apiRes.data.data.play;
 
-    // Temporary download folder
+    // Temporary folder
     const tempDir = "temp";
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
 
     const fileName = `tiktok_${Date.now()}.mp4`;
     const filePath = path.join(tempDir, fileName);
 
-    // Download video stream
+    // Download video
     const writer = fs.createWriteStream(filePath);
     const videoRes = await axios({ url: videoUrl, method: "GET", responseType: "stream" });
     videoRes.data.pipe(writer);
 
-    writer.on("finish", async () => {
-      await bot.deleteMessage(chatId, sendingMsg.message_id);
-
-      await bot.sendVideo(chatId, filePath, { caption: "✅ Video downloaded successfully!" });
-
-      // Delete temp file
-      fs.unlinkSync(filePath);
+    await new Promise((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
     });
 
-    writer.on("error", async () => {
-      await bot.editMessageText("❌ Failed to download video.", {
-        chat_id: chatId,
-        message_id: sendingMsg.message_id,
-      });
-    });
+    await bot.deleteMessage(chatId, sendingMsg.message_id);
+    await bot.sendVideo(chatId, filePath, { caption: "✅ Video downloaded successfully!" });
+
+    fs.unlinkSync(filePath); // Cleanup
 
   } catch (err) {
     console.error(err);
@@ -96,4 +115,4 @@ bot.on("message", async (msg) => {
       message_id: sendingMsg.message_id,
     });
   }
-});
+}
