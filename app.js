@@ -5,26 +5,28 @@ require("dotenv").config();
 
 // Bot setup (webhook mode ONLY)
 const TOKEN = process.env.TOKEN;
+
+// Disable internal TelegramBot server
 const bot = new TelegramBot(TOKEN, { webHook: false });
 
 // Express server
 const app = express();
-app.use(express.json()); // Important for webhooks!
+app.use(express.json());
 
 // Ping route
 app.get("/", (req, res) => res.send("🐰 Bot is alive!"));
 
-// Webhook endpoint (CRITICAL FIX)
+// Webhook route
 app.post(`/bot${TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-// Start express server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Web server running on port ${PORT}`));
+// Render gives dynamic PORT (must use this)
+const PORT = process.env.PORT;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
-// Set the webhook (VERY IMPORTANT)
+// Set webhook to correct URL
 const WEBHOOK_URL = `https://tiktok-video-downloader-vlrj.onrender.com/bot${TOKEN}`;
 bot.setWebHook(WEBHOOK_URL);
 
@@ -36,7 +38,7 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-// Expand short TikTok URLs
+// Expand short URL (TikTok)
 async function expandUrl(shortUrl) {
   try {
     const res = await axios.get(shortUrl, {
@@ -61,7 +63,7 @@ async function fetchWithRetry(url, retries = 3, delay = 2000) {
   }
 }
 
-// MAIN video downloader
+// MAIN handler
 bot.on("message", async (msg) => {
   const text = msg.text;
   const chatId = msg.chat.id;
@@ -73,7 +75,6 @@ bot.on("message", async (msg) => {
   try {
     const expandedUrl = await expandUrl(text);
 
-    // Call your API
     const apiRes = await fetchWithRetry(
       `https://tiktok-api-video-downloader.onrender.com/tiktok/api.php?url=${encodeURIComponent(
         expandedUrl
@@ -86,7 +87,6 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // Download video (stream)
     const videoStream = await axios({
       url: videoUrl,
       method: "GET",
@@ -103,7 +103,6 @@ bot.on("message", async (msg) => {
     console.error("❌ Error:", err.message);
 
     await bot.sendMessage(chatId, "❌ Error downloading video. Try again.");
-
     try {
       await bot.deleteMessage(chatId, loadingMsg.message_id);
     } catch {}
