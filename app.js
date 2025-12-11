@@ -2,25 +2,24 @@ const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const express = require("express");
 
-// Your bot token
-const TOKEN = "8304962337:AAEsuzE33xUviufaySlDD_I-KxZKH4Mqq-Y";
+// =======================
+// Telegram Bot
+// =======================
+const TOKEN = process.env.TOKEN || "YOUR_TOKEN_HERE";
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// /start command
 bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(
-    msg.chat.id,
-    "🐰 Send me a TikTok link and I will download the video for you!"
-  );
+  bot.sendMessage(msg.chat.id, "🐰 Send me a TikTok link!");
 });
 
-// Helper function: expand short TikTok URLs
+// Expand short links
 async function expandUrl(shortUrl) {
   try {
     const res = await axios.get(shortUrl, {
       maxRedirects: 0,
-      validateStatus: (status) => status >= 200 && status < 400
+      validateStatus: (code) => code >= 200 && code < 400
     });
     return res.headers.location || shortUrl;
   } catch {
@@ -28,76 +27,72 @@ async function expandUrl(shortUrl) {
   }
 }
 
-// Main message handler
 bot.on("message", async (msg) => {
   const text = msg.text;
-  const chatId = msg.chat.id;
-
   if (!text || !text.includes("tiktok.com")) return;
 
-  // Send "Downloading" message and save message ID
-  const sendingMsg = await bot.sendMessage(chatId, "⏳ Downloading TikTok video...");
+  const chatId = msg.chat.id;
+  const loadingMsg = await bot.sendMessage(chatId, "⏳ Downloading...");
 
   try {
-    // Expand short URLs
     const url = await expandUrl(text);
 
-    // Call your self-hosted TikTok downloader API
-    const apiRes = await axios.get("https://tiktok-api-video-downloader.onrender.com/tiktok/api.php", {
+    const api = await axios.get("https://tiktok-api-video-downloader.onrender.com/tiktok/api.php", {
       params: { url }
     });
 
-    const videoUrl = apiRes.data.video[0];
+    const videoUrl = api.data.video?.[0];
     if (!videoUrl) {
-      await bot.editMessageText("❌ Could not fetch video URL.", {
-        chat_id: chatId,
-        message_id: sendingMsg.message_id
+      await bot.editMessageText("❌ Cannot fetch video URL.", {
+        chat_id: chatId, message_id: loadingMsg.message_id
       });
       return;
     }
 
-    // Prepare temp file path
-    const tempDir = "temp";
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+    if (!fs.existsSync("temp")) fs.mkdirSync("temp");
 
     const fileName = `tiktok_${Date.now()}.mp4`;
-    const filePath = path.join(tempDir, fileName);
+    const filePath = path.join("temp", fileName);
 
-    // Download video
     const writer = fs.createWriteStream(filePath);
-    const videoRes = await axios({
+    const videoStream = await axios({
       url: videoUrl,
       method: "GET",
-      responseType: "stream",
+      responseType: "stream"
     });
 
-    videoRes.data.pipe(writer);
+    videoStream.data.pipe(writer);
 
     writer.on("finish", async () => {
-      // Delete "Downloading" message
-      await bot.deleteMessage(chatId, sendingMsg.message_id);
-
-      // Send video with caption alert
-      await bot.sendVideo(chatId, filePath, {
-        caption: "✅ Video downloaded successfully!"
-      });
-
-      // Delete temp file
+      await bot.deleteMessage(chatId, loadingMsg.message_id);
+      await bot.sendVideo(chatId, filePath, { caption: "✅ Downloaded!" });
       fs.unlinkSync(filePath);
     });
 
     writer.on("error", async () => {
-      await bot.editMessageText("❌ Failed to download video.", {
-        chat_id: chatId,
-        message_id: sendingMsg.message_id
+      await bot.editMessageText("❌ Download error.", {
+        chat_id: chatId, message_id: loadingMsg.message_id
       });
     });
 
   } catch (err) {
     console.error(err);
-    await bot.editMessageText("❌ Error processing your TikTok link.", {
-      chat_id: chatId,
-      message_id: sendingMsg.message_id
+    await bot.editMessageText("❌ Error processing TikTok link!", {
+      chat_id: chatId, message_id: loadingMsg.message_id
     });
   }
+});
+
+// =======================
+// EXPRESS SERVER (REQUIRED FOR RENDER FREE TIER)
+// =======================
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+app.get("/", (req, res) => {
+  res.send("Bot is alive! 🐰");
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
