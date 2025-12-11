@@ -13,7 +13,7 @@ require("dotenv").config();
 // CONFIG
 // ============================
 const TOKEN = process.env.TOKEN;
-const APP_URL = process.env.APP_URL; // Render app URL: https://your-app.onrender.com
+const APP_URL = process.env.APP_URL; // Render app URL, e.g., https://my-bot.onrender.com
 const PORT = process.env.PORT || 3000;
 
 if (!TOKEN || !APP_URL) {
@@ -25,8 +25,13 @@ if (!TOKEN || !APP_URL) {
 // EXPRESS SERVER
 // ============================
 const app = express();
-app.use(express.json()); // needed for webhook POST
+app.use(express.json()); // for webhook POST
 app.get("/", (req, res) => res.send("🐰 Telegram TikTok Bot is running!"));
+
+// ============================
+// TELEGRAM BOT (Webhook mode)
+// ============================
+const bot = new TelegramBot(TOKEN);
 
 // Telegram webhook endpoint
 app.post(`/bot${TOKEN}`, (req, res) => {
@@ -34,16 +39,16 @@ app.post(`/bot${TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
-app.listen(PORT, () => console.log(`Express server listening on port ${PORT}`));
+// Start server first, then set webhook
+app.listen(PORT, async () => {
+  console.log(`Express server listening on port ${PORT}`);
 
-// ============================
-// TELEGRAM BOT (Webhook mode)
-// ============================
-const bot = new TelegramBot(TOKEN, { webHook: { port: PORT } });
-
-// Set webhook
-bot.setWebHook(`${APP_URL}/bot${TOKEN}`).then(() => {
-  console.log("✅ Webhook set successfully!");
+  try {
+    await bot.setWebHook(`${APP_URL}/bot${TOKEN}`);
+    console.log("✅ Webhook set successfully!");
+  } catch (err) {
+    console.error("❌ Failed to set webhook:", err.message);
+  }
 });
 
 // ============================
@@ -125,7 +130,6 @@ async function handleDownload(chatId, text) {
     await bot.sendVideo(chatId, filePath);
 
     fs.unlinkSync(filePath); // Cleanup
-
   } catch (err) {
     console.error(err);
     await bot.editMessageText("❌ Error processing your link.", {
