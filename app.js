@@ -1,34 +1,18 @@
 const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
-const express = require("express");
 require("dotenv").config();
 
-// Bot setup (webhook mode ONLY)
+// Bot setup (polling mode)
 const TOKEN = process.env.TOKEN;
-
-// Disable internal TelegramBot server
-const bot = new TelegramBot(TOKEN, { webHook: false });
-
-// Express server
-const app = express();
-app.use(express.json());
-
-// Ping route
-app.get("/", (req, res) => res.send("🐰 Bot is alive!"));
-
-// Webhook route
-app.post(`/bot${TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
+const bot = new TelegramBot(TOKEN, {
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: { timeout: 10 }
+  }
 });
 
-// Render gives dynamic PORT (must use this)
-const PORT = process.env.PORT;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-// Set webhook to correct URL
-const WEBHOOK_URL = `https://tiktok-video-downloader-vlrj.onrender.com/bot${TOKEN}`;
-bot.setWebHook(WEBHOOK_URL);
+console.log("🤖 Telegram bot running in polling mode...");
 
 // /start command
 bot.onText(/\/start/, (msg) => {
