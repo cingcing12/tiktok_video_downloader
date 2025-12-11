@@ -62,23 +62,24 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   if (!text || !text.includes("tiktok.com")) return;
 
-  // Send "Downloading" message
-  const sendingMsg = await bot.sendMessage(chatId, "⏳ Downloading TikTok video...");
-
   try {
     const url = await expandUrl(text);
 
     // Call your self-hosted TikTok downloader API with retry
-    const apiRes = await fetchWithRetry(
-      `https://tiktok-api-video-downloader.onrender.com/tiktok/api.php?url=${encodeURIComponent(url)}`
-    );
+    let apiRes;
+    try {
+      apiRes = await fetchWithRetry(
+        `https://tiktok-api-video-downloader.onrender.com/tiktok/api.php?url=${encodeURIComponent(url)}`
+      );
+    } catch {
+      // If bot/server is waking up, notify user
+      await bot.sendMessage(chatId, "⏳ Server is waking up, please wait a few seconds and try again.");
+      return;
+    }
 
     const videoUrl = apiRes.data.video?.[0];
     if (!videoUrl) {
-      await bot.editMessageText("❌ Could not fetch video URL.", {
-        chat_id: chatId,
-        message_id: sendingMsg.message_id,
-      });
+      await bot.sendMessage(chatId, "❌ Could not fetch video URL.");
       return;
     }
 
@@ -101,35 +102,23 @@ bot.on("message", async (msg) => {
 
     writer.on("finish", async () => {
       try {
-        // Delete "Downloading" message
-        await bot.deleteMessage(chatId, sendingMsg.message_id);
-
-        // Send video with success caption
-        await bot.sendVideo(chatId, filePath, {
-          caption: "✅ Video downloaded successfully!",
-        });
+        // Send video directly without any messages
+        await bot.sendVideo(chatId, filePath);
 
         // Delete temp file
         fs.unlinkSync(filePath);
       } catch (err) {
         console.error("Error sending video:", err);
+        await bot.sendMessage(chatId, "❌ Failed to send video.");
       }
     });
 
     writer.on("error", async (err) => {
       console.error("Error writing video file:", err);
-      await bot.editMessageText("❌ Failed to download video.", {
-        chat_id: chatId,
-        message_id: sendingMsg.message_id,
-      });
+      await bot.sendMessage(chatId, "❌ Failed to download video.");
     });
   } catch (err) {
     console.error("Processing error:", err);
-    try {
-      await bot.editMessageText("❌ Error processing your TikTok link.", {
-        chat_id: chatId,
-        message_id: sendingMsg.message_id,
-      });
-    } catch {}
+    await bot.sendMessage(chatId, "❌ Error processing your TikTok link.");
   }
 });
