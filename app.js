@@ -4,9 +4,17 @@ const fs = require("fs");
 const path = require("path");
 require('dotenv').config();
 
-// Your bot token
+// Your bot token from .env
 const TOKEN = process.env.TOKEN;
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new TelegramBot(TOKEN, {
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: { timeout: 10 }
+  }
+});
+
+console.log("Server is running...");
 
 // /start command
 bot.onText(/\/start/, (msg) => {
@@ -16,7 +24,7 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-// Helper function: expand short TikTok URLs
+// Helper: expand short TikTok URLs
 async function expandUrl(shortUrl) {
   try {
     const res = await axios.get(shortUrl, {
@@ -29,26 +37,36 @@ async function expandUrl(shortUrl) {
   }
 }
 
-// Main message handler
+// Helper: fetch API with retry
+async function fetchWithRetry(url, retries = 3, delay = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await axios.get(url);
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(res => setTimeout(res, delay));
+    }
+  }
+}
+
+// Main handler
 bot.on("message", async (msg) => {
   const text = msg.text;
   const chatId = msg.chat.id;
-
   if (!text || !text.includes("tiktok.com")) return;
 
-  // Send "Downloading" message and save message ID
+  // Send "Downloading" message
   const sendingMsg = await bot.sendMessage(chatId, "⏳ Downloading TikTok video...");
 
   try {
-    // Expand short URLs
     const url = await expandUrl(text);
 
-    // Call your self-hosted TikTok downloader API
-    const apiRes = await axios.get("https://tiktok-api-video-downloader.onrender.com/tiktok/api.php", {
-      params: { url }
-    });
+    // Call your self-hosted TikTok downloader API with retry
+    const apiRes = await fetchWithRetry(
+      `https://tiktok-api-video-downloader.onrender.com/tiktok/api.php?url=${encodeURIComponent(url)}`
+    );
 
-    const videoUrl = apiRes.data.video[0];
+    const videoUrl = apiRes.data.video?.[0];
     if (!videoUrl) {
       await bot.editMessageText("❌ Could not fetch video URL.", {
         chat_id: chatId,
@@ -57,37 +75,42 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // Prepare temp file path
+    // Prepare temp folder
     const tempDir = "temp";
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
-
     const fileName = `tiktok_${Date.now()}.mp4`;
     const filePath = path.join(tempDir, fileName);
 
-    // Download video
+    // Download video stream
     const writer = fs.createWriteStream(filePath);
     const videoRes = await axios({
       url: videoUrl,
       method: "GET",
       responseType: "stream",
+      timeout: 30000 // 30s timeout
     });
 
     videoRes.data.pipe(writer);
 
     writer.on("finish", async () => {
-      // Delete "Downloading" message
-      await bot.deleteMessage(chatId, sendingMsg.message_id);
+      try {
+        // Delete "Downloading" message
+        await bot.deleteMessage(chatId, sendingMsg.message_id);
 
-      // Send video with caption alert
-      await bot.sendVideo(chatId, filePath, {
-        caption: "✅ Video downloaded successfully!"
-      });
+        // Send video with success caption
+        await bot.sendVideo(chatId, filePath, {
+          caption: "✅ Video downloaded successfully!"
+        });
 
-      // Delete temp file
-      fs.unlinkSync(filePath);
+        // Delete temp file
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        console.error("Error sending video:", err);
+      }
     });
 
-    writer.on("error", async () => {
+    writer.on("error", async (err) => {
+      console.error("Error writing video file:", err);
       await bot.editMessageText("❌ Failed to download video.", {
         chat_id: chatId,
         message_id: sendingMsg.message_id
@@ -95,10 +118,12 @@ bot.on("message", async (msg) => {
     });
 
   } catch (err) {
-    console.error(err);
-    await bot.editMessageText("❌ Error processing your TikTok link.", {
-      chat_id: chatId,
-      message_id: sendingMsg.message_id
-    });
+    console.error("Processing error:", err);
+    try {
+      await bot.editMessageText("❌ Error processing your TikTok link.", {
+        chat_id: chatId,
+        message_id: sendingMsg.message_id
+      });
+    } catch {}
   }
 });
