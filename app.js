@@ -6,32 +6,50 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
-const PQueue = require("p-queue").default; // FIX: use .default
+const PQueue = require("p-queue").default;
 require("dotenv").config();
 
 // ============================
-// EXPRESS SERVER (Optional, prevent Render warnings)
-// ============================
-const app = express();
-const PORT = process.env.PORT || 3000;
-app.get("/", (req, res) => res.send("🐰 Telegram TikTok Bot is running!"));
-app.listen(PORT, () => console.log(`Express server listening on port ${PORT}`));
-
-// ============================
-// TELEGRAM BOT SETUP
+// CONFIG
 // ============================
 const TOKEN = process.env.TOKEN;
-if (!TOKEN) {
-  console.error("❌ Please set your TOKEN in .env file");
+const APP_URL = process.env.APP_URL; // Render app URL: https://your-app.onrender.com
+const PORT = process.env.PORT || 3000;
+
+if (!TOKEN || !APP_URL) {
+  console.error("❌ Please set TOKEN and APP_URL in .env file");
   process.exit(1);
 }
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+// ============================
+// EXPRESS SERVER
+// ============================
+const app = express();
+app.use(express.json()); // needed for webhook POST
+app.get("/", (req, res) => res.send("🐰 Telegram TikTok Bot is running!"));
+
+// Telegram webhook endpoint
+app.post(`/bot${TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.listen(PORT, () => console.log(`Express server listening on port ${PORT}`));
 
 // ============================
-// QUEUE SYSTEM: Limit concurrent downloads
+// TELEGRAM BOT (Webhook mode)
 // ============================
-const queue = new PQueue({ concurrency: 2 }); // Adjust concurrency if needed
+const bot = new TelegramBot(TOKEN, { webHook: { port: PORT } });
+
+// Set webhook
+bot.setWebHook(`${APP_URL}/bot${TOKEN}`).then(() => {
+  console.log("✅ Webhook set successfully!");
+});
+
+// ============================
+// QUEUE SYSTEM
+// ============================
+const queue = new PQueue({ concurrency: 2 });
 
 // ============================
 // /start COMMAND
@@ -87,8 +105,8 @@ async function handleDownload(chatId, text) {
     const videoUrl = apiRes.data.data.play;
 
     // Temporary folder
-    const tempDir = "temp";
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+    const tempDir = path.join(__dirname, "temp");
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
     const fileName = `tiktok_${Date.now()}.mp4`;
     const filePath = path.join(tempDir, fileName);
