@@ -5,7 +5,7 @@ require("dotenv").config();
 
 // Bot setup (webhook mode ONLY)
 const TOKEN = process.env.TOKEN;
-const bot = new TelegramBot(TOKEN, { webHook: true });
+const bot = new TelegramBot(TOKEN, { webHook: false });
 
 // Express server
 const app = express();
