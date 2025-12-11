@@ -62,6 +62,14 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   if (!text || !text.includes("tiktok.com")) return;
 
+  // Send "Downloading..." message
+  let progressMsg;
+  try {
+    progressMsg = await bot.sendMessage(chatId, "⏳ Downloading video in progress...");
+  } catch (err) {
+    console.error("Error sending progress message:", err);
+  }
+
   try {
     const url = await expandUrl(text);
 
@@ -72,7 +80,6 @@ bot.on("message", async (msg) => {
         `https://tiktok-api-video-downloader.onrender.com/tiktok/api.php?url=${encodeURIComponent(url)}`
       );
     } catch {
-      // If bot/server is waking up, notify user
       await bot.sendMessage(chatId, "⏳ Server is waking up, please wait a few seconds and try again.");
       return;
     }
@@ -95,15 +102,20 @@ bot.on("message", async (msg) => {
       url: videoUrl,
       method: "GET",
       responseType: "stream",
-      timeout: 60000, // 60s timeout
+      timeout: 60000,
     });
 
     videoRes.data.pipe(writer);
 
     writer.on("finish", async () => {
       try {
-        // Send video directly without any messages
+        // Send video directly
         await bot.sendVideo(chatId, filePath);
+
+        // Delete "Downloading..." message
+        if (progressMsg) {
+          await bot.deleteMessage(chatId, progressMsg.message_id);
+        }
 
         // Delete temp file
         fs.unlinkSync(filePath);
@@ -116,9 +128,15 @@ bot.on("message", async (msg) => {
     writer.on("error", async (err) => {
       console.error("Error writing video file:", err);
       await bot.sendMessage(chatId, "❌ Failed to download video.");
+      if (progressMsg) {
+        await bot.deleteMessage(chatId, progressMsg.message_id);
+      }
     });
   } catch (err) {
     console.error("Processing error:", err);
     await bot.sendMessage(chatId, "❌ Error processing your TikTok link.");
+    if (progressMsg) {
+      await bot.deleteMessage(chatId, progressMsg.message_id);
+    }
   }
 });
