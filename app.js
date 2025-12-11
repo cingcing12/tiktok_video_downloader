@@ -25,31 +25,24 @@ if (!TOKEN || !APP_URL) {
 // EXPRESS SERVER
 // ============================
 const app = express();
-app.use(express.json()); // for webhook POST
+app.use(express.json());
 app.get("/", (req, res) => res.send("🐰 Telegram TikTok Bot is running!"));
+app.listen(PORT, () => console.log(`Express server listening on port ${PORT}`));
 
 // ============================
-// TELEGRAM BOT (Webhook mode)
+// TELEGRAM BOT (Polling mode)
 // ============================
-const bot = new TelegramBot(TOKEN);
+const bot = new TelegramBot(TOKEN, { polling: true });
+console.log("✅ Bot started in polling mode!");
 
-// Telegram webhook endpoint
-app.post(`/bot${TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
-
-// Start server first, then set webhook
-app.listen(PORT, async () => {
-  console.log(`Express server listening on port ${PORT}`);
-
-  try {
-    await bot.setWebHook(`${APP_URL}/bot${TOKEN}`);
-    console.log("✅ Webhook set successfully!");
-  } catch (err) {
-    console.error("❌ Failed to set webhook:", err.message);
-  }
-});
+// ============================
+// SELF-PING SYSTEM
+// ============================
+setInterval(() => {
+  axios.get(APP_URL)
+    .then(() => console.log("🔁 Self-ping successful"))
+    .catch(err => console.log("❌ Self-ping failed:", err.message));
+}, 4 * 60 * 1000); // Ping every 4 minutes
 
 // ============================
 // QUEUE SYSTEM
@@ -73,7 +66,7 @@ async function expandUrl(shortUrl) {
   try {
     const res = await axios.get(shortUrl, {
       maxRedirects: 0,
-      validateStatus: (status) => status >= 200 && status < 400,
+      validateStatus: status => status >= 200 && status < 400
     });
     return res.headers.location || shortUrl;
   } catch {
@@ -87,10 +80,8 @@ async function expandUrl(shortUrl) {
 bot.on("message", (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
-
   if (!text || !text.includes("tiktok.com")) return;
 
-  // Add download task to queue
   queue.add(() => handleDownload(chatId, text));
 });
 
@@ -134,7 +125,7 @@ async function handleDownload(chatId, text) {
     console.error(err);
     await bot.editMessageText("❌ Error processing your link.", {
       chat_id: chatId,
-      message_id: sendingMsg.message_id,
+      message_id: sendingMsg.message_id
     });
   }
 }
