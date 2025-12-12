@@ -13,7 +13,7 @@ require("dotenv").config();
 // CONFIG
 // ============================
 const TOKEN = process.env.TOKEN;
-const APP_URL = process.env.APP_URL; 
+const APP_URL = process.env.APP_URL;
 const PORT = process.env.PORT || 3000;
 
 if (!TOKEN || !APP_URL) {
@@ -25,29 +25,26 @@ if (!TOKEN || !APP_URL) {
 // EXPRESS SERVER
 // ============================
 const app = express();
-app.use(express.json());
-app.get("/", (req, res) => res.send("🐰 Telegram TikTok Bot is running!"));
-app.listen(PORT, () => console.log(`Express server listening on port ${PORT}`));
+app.get("/", (req, res) => res.send("🐰 Telegram TikTok Downloader Bot Running!"));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 // ============================
-// TELEGRAM BOT (Polling mode)
+// POLLING BOT
 // ============================
 const bot = new TelegramBot(TOKEN, { polling: true });
-console.log("✅ Bot started in polling mode!");
+console.log("🤖 Bot started in polling mode!");
 
 // ============================
-// SELF-PING SYSTEM
+// SELF PING (STOP BOT SLEEP)
 // ============================
 setInterval(() => {
-  axios.get(APP_URL)
-    .then(() => console.log("🔁 Self-ping successful"))
-    .catch(err => console.log("❌ Self-ping failed:", err.message));
-}, 4 * 60 * 1000); // 4 minutes
+  axios.get(APP_URL).catch(() => {});
+}, 4 * 60 * 1000);
 
 // ============================
-// QUEUE SYSTEM
+// QUEUE (SUPPORT 100+ USERS)
 // ============================
-const queue = new PQueue({ concurrency: 2 });
+const queue = new PQueue({ concurrency: 5 });
 
 // ============================
 // /start COMMAND
@@ -55,18 +52,18 @@ const queue = new PQueue({ concurrency: 2 });
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
-    "🐰 Send me a TikTok link and I will download the video for you!"
+    "🐰 Send me any TikTok link and I will download the video for you!"
   );
 });
 
 // ============================
-// HELPER: Expand short TikTok URLs
+// EXPAND SHORT URL
 // ============================
 async function expandUrl(shortUrl) {
   try {
     const res = await axios.get(shortUrl, {
       maxRedirects: 0,
-      validateStatus: status => status >= 200 && status < 400
+      validateStatus: s => s >= 200 && s < 400
     });
     return res.headers.location || shortUrl;
   } catch {
@@ -86,32 +83,32 @@ bot.on("message", (msg) => {
 });
 
 // ============================
-// DOWNLOAD HANDLER (FIXED)
+// DOWNLOAD HANDLER (OPTIMIZED)
 // ============================
 async function handleDownload(chatId, text) {
-  const sendingMsg = await bot.sendMessage(chatId, "⏳ Downloading TikTok video...");
+  const statusMsg = await bot.sendMessage(chatId, "⏳ Downloading... Please wait...");
 
   try {
     const url = await expandUrl(text);
 
     // ================================
-    // API RETRY (fix failing for 2 users)
+    // API RETRY SYSTEM
     // ================================
     let apiRes;
     for (let i = 0; i < 3; i++) {
       try {
         apiRes = await axios.get("https://tikwm.com/api/", { params: { url } });
         if (apiRes.data?.data?.play) break;
-      } catch (err) {
-        if (i === 2) throw new Error("TikWM failed 3 times");
-      }
-      await new Promise(res => setTimeout(res, 800));
+      } catch {}
+      await new Promise(r => setTimeout(r, 500));
     }
+
+    if (!apiRes?.data?.data?.play) throw new Error("API failed");
 
     const videoUrl = apiRes.data.data.play;
 
     // ================================
-    // UNIQUE TEMP FOLDER PER USER
+    // TEMP USER FOLDER
     // ================================
     const tempDir = path.join(__dirname, "temp", String(chatId));
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -120,34 +117,52 @@ async function handleDownload(chatId, text) {
     const filePath = path.join(tempDir, fileName);
 
     // ================================
-    // DOWNLOAD VIDEO SAFELY
+    // DOWNLOAD VIDEO STREAM
     // ================================
+    const videoStream = await axios({
+      url: videoUrl,
+      method: "GET",
+      responseType: "stream"
+    });
+
     const writer = fs.createWriteStream(filePath);
-    const videoRes = await axios({ url: videoUrl, method: "GET", responseType: "stream" });
-    videoRes.data.pipe(writer);
+    videoStream.data.pipe(writer);
 
     await new Promise((resolve, reject) => {
       writer.on("finish", resolve);
       writer.on("error", reject);
     });
 
-    // SAFE deleteMessage
-    try {
-      await bot.deleteMessage(chatId, sendingMsg.message_id);
-    } catch {}
+    // ================================
+    // DELETE MESSAGE FAST → SEND VIDEO
+    // ================================
+    try { await bot.deleteMessage(chatId, statusMsg.message_id); } catch {}
 
-    await bot.sendVideo(chatId, filePath);
+    // SEND VIDEO with retry 2 times
+    for (let i = 0; i < 3; i++) {
+      try {
+        await bot.sendVideo(chatId, filePath, {
+          supports_streaming: true
+        });
+        break;
+      } catch (err) {
+        if (i === 2) throw err;
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
 
+    // ================================
     // CLEAN UP
+    // ================================
     fs.unlinkSync(filePath);
 
   } catch (err) {
-    console.error(err);
+    console.error("❌ ERROR:", err.message);
 
     try {
-      await bot.editMessageText("❌ Error processing your link. Please try again later.", {
+      await bot.editMessageText("❌ Failed to download video. Please try again later.", {
         chat_id: chatId,
-        message_id: sendingMsg.message_id
+        message_id: statusMsg.message_id
       });
     } catch {}
   }
