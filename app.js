@@ -13,7 +13,7 @@ require("dotenv").config();
 // CONFIG
 // ============================
 const TOKEN = process.env.TOKEN;
-const APP_URL = process.env.APP_URL; // Render app URL, e.g., https://my-bot.onrender.com
+const APP_URL = process.env.APP_URL; 
 const PORT = process.env.PORT || 3000;
 
 if (!TOKEN || !APP_URL) {
@@ -42,7 +42,7 @@ setInterval(() => {
   axios.get(APP_URL)
     .then(() => console.log("🔁 Self-ping successful"))
     .catch(err => console.log("❌ Self-ping failed:", err.message));
-}, 4 * 60 * 1000); // Ping every 4 minutes
+}, 4 * 60 * 1000); // 4 minutes
 
 // ============================
 // QUEUE SYSTEM
@@ -86,7 +86,7 @@ bot.on("message", (msg) => {
 });
 
 // ============================
-// DOWNLOAD HANDLER
+// DOWNLOAD HANDLER (FIXED)
 // ============================
 async function handleDownload(chatId, text) {
   const sendingMsg = await bot.sendMessage(chatId, "⏳ Downloading TikTok video...");
@@ -94,20 +94,34 @@ async function handleDownload(chatId, text) {
   try {
     const url = await expandUrl(text);
 
-    // TikWM API
-    const apiRes = await axios.get("https://tikwm.com/api/", { params: { url } });
-    if (!apiRes.data?.data?.play) throw new Error("Cannot fetch video URL");
+    // ================================
+    // API RETRY (fix failing for 2 users)
+    // ================================
+    let apiRes;
+    for (let i = 0; i < 3; i++) {
+      try {
+        apiRes = await axios.get("https://tikwm.com/api/", { params: { url } });
+        if (apiRes.data?.data?.play) break;
+      } catch (err) {
+        if (i === 2) throw new Error("TikWM failed 3 times");
+      }
+      await new Promise(res => setTimeout(res, 800));
+    }
 
     const videoUrl = apiRes.data.data.play;
 
-    // Temporary folder
-    const tempDir = path.join(__dirname, "temp");
+    // ================================
+    // UNIQUE TEMP FOLDER PER USER
+    // ================================
+    const tempDir = path.join(__dirname, "temp", String(chatId));
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-    const fileName = `tiktok_${Date.now()}.mp4`;
+    const fileName = `tiktok_${Date.now()}_${Math.random().toString(36).slice(2)}.mp4`;
     const filePath = path.join(tempDir, fileName);
 
-    // Download video
+    // ================================
+    // DOWNLOAD VIDEO SAFELY
+    // ================================
     const writer = fs.createWriteStream(filePath);
     const videoRes = await axios({ url: videoUrl, method: "GET", responseType: "stream" });
     videoRes.data.pipe(writer);
@@ -117,15 +131,24 @@ async function handleDownload(chatId, text) {
       writer.on("error", reject);
     });
 
-    await bot.deleteMessage(chatId, sendingMsg.message_id);
+    // SAFE deleteMessage
+    try {
+      await bot.deleteMessage(chatId, sendingMsg.message_id);
+    } catch {}
+
     await bot.sendVideo(chatId, filePath);
 
-    fs.unlinkSync(filePath); // Cleanup
+    // CLEAN UP
+    fs.unlinkSync(filePath);
+
   } catch (err) {
     console.error(err);
-    await bot.editMessageText("❌ Error processing your link.", {
-      chat_id: chatId,
-      message_id: sendingMsg.message_id
-    });
+
+    try {
+      await bot.editMessageText("❌ Error processing your link. Please try again later.", {
+        chat_id: chatId,
+        message_id: sendingMsg.message_id
+      });
+    } catch {}
   }
 }
