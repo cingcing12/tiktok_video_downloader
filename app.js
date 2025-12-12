@@ -13,7 +13,7 @@ require("dotenv").config();
 // CONFIG
 // ============================
 const TOKEN = process.env.TOKEN;
-const APP_URL = process.env.APP_URL;
+const APP_URL = process.env.APP_URL; // https://your-app.onrender.com
 const PORT = process.env.PORT || 3000;
 
 if (!TOKEN || !APP_URL) {
@@ -25,11 +25,19 @@ if (!TOKEN || !APP_URL) {
 // EXPRESS SERVER
 // ============================
 const app = express();
+
+// Serve files from /tmp
+app.get("/video/:name", (req, res) => {
+  const filePath = path.join("/tmp", req.params.name);
+  if (!fs.existsSync(filePath)) return res.status(404).send("File not found");
+  res.sendFile(filePath);
+});
+
 app.get("/", (req, res) => res.send("🐰 Bot running"));
 app.listen(PORT, () => console.log(`Server running on ${PORT}`));
 
 // ============================
-// PREVENT SLEEP — SELF-PING
+// PREVENT SLEEP
 // ============================
 setInterval(() => axios.get(APP_URL).catch(() => {}), 4 * 60 * 1000);
 
@@ -39,7 +47,7 @@ setInterval(() => axios.get(APP_URL).catch(() => {}), 4 * 60 * 1000);
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 // ============================
-// CONCURRENCY QUEUE
+// QUEUE SYSTEM
 // ============================
 const globalQueue = new PQueue({ concurrency: 20 });
 
@@ -52,14 +60,14 @@ function getChatQueue(chatId) {
 }
 
 // ============================
-// COMMAND /start
+// /start
 // ============================
 bot.onText(/\/start/, msg => {
   bot.sendMessage(msg.chat.id, "🐰 Send me a TikTok link to download!");
 });
 
 // ============================
-// EXPAND SHORT LINKS
+// Expand short link
 // ============================
 async function expandUrl(shortUrl) {
   try {
@@ -92,34 +100,36 @@ bot.on("message", msg => {
 });
 
 // ============================
-// MAIN DOWNLOAD HANDLER
+// MAIN HANDLER (NO MORE 50MB)
 // ============================
 async function handleDownload(chatId, text) {
-  const loading = await bot.sendMessage(chatId, "⏳ Downloading...");
+  const loading = await bot.sendMessage(chatId, "⏳ Fetching video...");
 
   try {
-    const url = await expandUrl(text);
+    const resolvedUrl = await expandUrl(text);
 
-    // TikWM API
-    const apiRes = await getTikwmVideo(url);
-
+    // 1) CALL TikWM
+    const apiRes = await getTikwmVideo(resolvedUrl);
     const videoUrl = apiRes.data.data.play;
 
+    // 2) DOWNLOAD to /tmp
     const filePath = await downloadVideoWithRetry(chatId, videoUrl);
 
-    // Clean the message
-    try {
-      await bot.deleteMessage(chatId, loading.message_id);
-    } catch {}
+    // 3) Generate link
+    const fileName = path.basename(filePath);
+    const downloadLink = `${APP_URL}/video/${fileName}`;
 
-    // Send to Telegram
-    await sendVideoWithRetry(chatId, filePath);
+    // 4) Edit loading message
+    await bot.editMessageText(
+      `✅ Your video is ready!\n\n🔗 Download link:\n${downloadLink}\n\n⚠️ Auto-delete in 5 minutes.`,
+      { chat_id: chatId, message_id: loading.message_id }
+    );
 
   } catch (err) {
     console.log("❌ ERROR:", err.message);
 
     try {
-      await bot.editMessageText("❌ Failed to download. Try again.", {
+      await bot.editMessageText("❌ Failed. Try again.", {
         chat_id: chatId,
         message_id: loading.message_id
       });
@@ -127,9 +137,9 @@ async function handleDownload(chatId, text) {
   }
 }
 
-// ------------------------------
+// ============================
 // TikWM RETRY
-// ------------------------------
+// ============================
 async function getTikwmVideo(url) {
   for (let i = 0; i < 5; i++) {
     try {
@@ -138,63 +148,48 @@ async function getTikwmVideo(url) {
       });
       if (res.data?.data?.play) return res;
     } catch {}
-    await wait(500 + Math.random() * 600);
+    await wait(400);
   }
-  throw new Error("TikWM failed after 5 tries");
+  throw new Error("TikWM failed 5 times");
 }
 
-// ------------------------------
-// DOWNLOAD → Render-safe (/tmp)
-// ------------------------------
+// ============================
+// DOWNLOAD to /tmp
+// ============================
 async function downloadVideoWithRetry(chatId, videoUrl) {
-  const tempDir = "/tmp";
-  const filePath = path.join(tempDir, `tt_${chatId}_${Date.now()}.mp4`);
+  const fileName = `tt_${chatId}_${Date.now()}.mp4`;
+  const filePath = path.join("/tmp", fileName);
 
   for (let i = 0; i < 5; i++) {
     try {
-      const stream = await axios({
+      const response = await axios({
         url: videoUrl,
         method: "GET",
         responseType: "stream"
       });
 
       const writer = fs.createWriteStream(filePath);
-      stream.data.pipe(writer);
+      response.data.pipe(writer);
 
       await new Promise((resolve, reject) => {
         writer.on("finish", resolve);
         writer.on("error", reject);
       });
 
-      // auto-delete after 5 min
       scheduleTemporaryDelete(filePath, 5 * 60 * 1000);
-
       return filePath;
-    } catch {}
-    await wait(800);
-  }
 
-  throw new Error("Download retry failed");
-}
-
-// ------------------------------
-// TELEGRAM SEND RETRY
-// ------------------------------
-async function sendVideoWithRetry(chatId, filePath) {
-  for (let i = 0; i < 5; i++) {
-    try {
-      await bot.sendVideo(chatId, filePath, { supports_streaming: true });
-      return;
-    } catch (err) {
-      if (i === 4) throw err;
-      await wait(800);
+    } catch {
+      await wait(600);
     }
   }
+
+  throw new Error("Download failed after 5 retries");
 }
 
-// ------------------------------
-// AUTO DELETE FILE
-// ------------------------------
+// ============================
+// AUTO DELETE
+// ============================
 function scheduleTemporaryDelete(filePath, delay) {
   setTimeout(() => {
     try {
@@ -208,7 +203,7 @@ function scheduleTemporaryDelete(filePath, delay) {
   }, delay);
 }
 
-// ------------------------------
+// ============================
 function wait(ms) {
   return new Promise(res => setTimeout(res, ms));
 }
