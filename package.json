@@ -16,6 +16,7 @@
     "express": "^5.2.1",
     "fs": "^0.0.1-security",
     "fs-extra": "^11.3.2",
+    "mongoose": "^9.0.1",
     "node-telegram-bot-api": "^0.66.0",
     "p-queue": "^9.0.1",
     "path": "^0.12.7"
