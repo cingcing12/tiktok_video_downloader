@@ -7,6 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const PQueue = require("p-queue").default;
+const mongoose = require("mongoose");
 require("dotenv").config();
 
 // ============================
@@ -16,15 +17,39 @@ const TOKEN = process.env.TOKEN;
 const APP_URL = process.env.APP_URL;
 const PORT = process.env.PORT || 3000;
 
-if (!TOKEN || !APP_URL) {
-  console.error("❌ Please set TOKEN and APP_URL in .env");
+if (!TOKEN || !APP_URL || !process.env.MONGO_URI) {
+  console.error("❌ Missing env variables");
   process.exit(1);
 }
+
+// ============================
+// MONGODB CONNECT
+// ============================
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => console.log("✅ MongoDB connected"))
+  .catch(err => {
+    console.error("❌ MongoDB error:", err);
+    process.exit(1);
+  });
+
+// ============================
+// USER SCHEMA (SILENT)
+// ============================
+const userSchema = new mongoose.Schema({
+  userId: { type: Number, unique: true },
+  lastActive: { type: Date, default: Date.now },
+  joinedAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model("User", userSchema);
 
 // ============================
 // EXPRESS SERVER
 // ============================
 const app = express();
+
 app.get("/", (req, res) => res.send("🐰 Bot running"));
 
 app.get("/video/:file", (req, res) => {
@@ -36,12 +61,16 @@ app.get("/video/:file", (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Server running on ${PORT}`)
+);
 
 // ============================
-// PREVENT SLEEP — SELF-PING
+// PREVENT SLEEP
 // ============================
-setInterval(() => axios.get(APP_URL).catch(() => {}), 4 * 60 * 1000);
+setInterval(() => {
+  axios.get(APP_URL).catch(() => {});
+}, 4 * 60 * 1000);
 
 // ============================
 // BOT (POLLING)
@@ -49,7 +78,7 @@ setInterval(() => axios.get(APP_URL).catch(() => {}), 4 * 60 * 1000);
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 // ============================
-// CONCURRENCY QUEUE
+// QUEUES
 // ============================
 const globalQueue = new PQueue({ concurrency: 20 });
 const chatQueues = new Map();
@@ -62,159 +91,152 @@ function getChatQueue(chatId) {
 }
 
 // ============================
-// /start command
+// /start (SILENT STORE)
 // ============================
-bot.onText(/\/start/, msg => {
+bot.onText(/\/start/, async (msg) => {
+  await User.findOneAndUpdate(
+    { userId: msg.from.id },
+    { lastActive: new Date() },
+    { upsert: true }
+  );
+
   bot.sendMessage(msg.chat.id, "🐰 Send me a TikTok link to download!");
 });
 
 // ============================
-// EXPAND SHORT URL
-// ============================
-async function expandUrl(shortUrl) {
-  try {
-    const res = await axios.get(shortUrl, {
-      maxRedirects: 0,
-      validateStatus: s => s >= 200 && s < 400
-    });
-    return res.headers.location || shortUrl;
-  } catch {
-    return shortUrl;
-  }
-}
-
-// ============================
 // MESSAGE HANDLER
 // ============================
-bot.on("message", msg => {
-  const chatId = msg.chat.id;
-  const text = msg.text;
+bot.on("message", async (msg) => {
+  if (!msg.from) return;
 
+  // silently update activity
+  await User.updateOne(
+    { userId: msg.from.id },
+    { lastActive: new Date() },
+    { upsert: true }
+  );
+
+  const text = msg.text;
   if (!text || !text.includes("tiktok.com")) return;
 
+  const chatId = msg.chat.id;
   const queue = getChatQueue(chatId);
 
   queue.add(() =>
-    globalQueue.add(() =>
-      handleDownload(chatId, text)
-    )
+    globalQueue.add(() => handleDownload(chatId, text))
   );
 });
 
 // ============================
-// MAIN HANDLER
+// COOL LOADING ANIMATION
+// ============================
+async function startLoading(chatId) {
+  const frames = ["⏳ Downloading", "⏳ Downloading.", "⏳ Downloading..", "⏳ Downloading..."];
+  let i = 0;
+
+  const msg = await bot.sendMessage(chatId, frames[0]);
+
+  const interval = setInterval(() => {
+    bot.editMessageText(frames[i % frames.length], {
+      chat_id: chatId,
+      message_id: msg.message_id
+    }).catch(() => {});
+    i++;
+  }, 600);
+
+  return { msg, interval };
+}
+
+// ============================
+// MAIN DOWNLOAD HANDLER
 // ============================
 async function handleDownload(chatId, text) {
-  const loading = await bot.sendMessage(chatId, "⏳ Downloading...");
+  const loader = await startLoading(chatId);
 
   try {
     const url = await expandUrl(text);
-
     const apiRes = await getTikwmVideo(url);
     const videoUrl = apiRes.data.data.play;
 
-    const filePath = await downloadVideoWithRetry(chatId, videoUrl);
-
-    // Check file size
+    const filePath = await downloadVideo(videoUrl, chatId);
     const sizeMB = fs.statSync(filePath).size / (1024 * 1024);
 
-    // Delete loading msg
-    try { await bot.deleteMessage(chatId, loading.message_id); } catch {}
+    clearInterval(loader.interval);
+    await bot.deleteMessage(chatId, loader.msg.message_id).catch(() => {});
 
     if (sizeMB < 50) {
-      // Send directly
       await bot.sendVideo(chatId, filePath, { supports_streaming: true });
-
-      // Delete file instantly since <50MB
       fs.unlinkSync(filePath);
-      console.log("🗑️ Deleted small file:", filePath);
-
     } else {
-      // Large video → send download link
       const fileName = path.basename(filePath);
       const downloadUrl = `${APP_URL}/video/${fileName}`;
 
       await bot.sendMessage(
         chatId,
-        `📥 Your video is ready!\n\n🔗 Download (auto delete in 5 min):\n${downloadUrl}`
+        `📥 Video ready!\n\n🔗 Download (auto delete in 5 min):\n${downloadUrl}`
       );
     }
 
   } catch (err) {
-    console.log("❌ ERROR:", err.message);
-    try {
-      await bot.editMessageText("❌ Failed to download. Try again.", {
-        chat_id: chatId,
-        message_id: loading.message_id
-      });
-    } catch {}
+    clearInterval(loader.interval);
+    await bot.editMessageText("❌ Failed to download. Try again.", {
+      chat_id: chatId,
+      message_id: loader.msg.message_id
+    }).catch(() => {});
   }
 }
 
 // ============================
-// TikWM RETRY
+// TIKWM API
 // ============================
 async function getTikwmVideo(url) {
   for (let i = 0; i < 5; i++) {
     try {
-      const res = await axios.get("https://tikwm.com/api/", { params: { url } });
+      const res = await axios.get("https://tikwm.com/api/", {
+        params: { url }
+      });
       if (res.data?.data?.play) return res;
     } catch {}
-    await wait(500 + Math.random() * 600);
+    await wait(600);
   }
-  throw new Error("TikWM failed after 5 tries");
+  throw new Error("TikWM failed");
 }
 
 // ============================
-// DOWNLOAD to /tmp
+// DOWNLOAD VIDEO
 // ============================
-async function downloadVideoWithRetry(chatId, videoUrl) {
+async function downloadVideo(videoUrl, chatId) {
   const filePath = `/tmp/tt_${chatId}_${Date.now()}.mp4`;
 
-  for (let i = 0; i < 5; i++) {
-    try {
-      const stream = await axios({
-        url: videoUrl,
-        method: "GET",
-        responseType: "stream"
-      });
+  const stream = await axios({
+    url: videoUrl,
+    method: "GET",
+    responseType: "stream"
+  });
 
-      const writer = fs.createWriteStream(filePath);
-      stream.data.pipe(writer);
+  const writer = fs.createWriteStream(filePath);
+  stream.data.pipe(writer);
 
-      await new Promise((resolve, reject) => {
-        writer.on("finish", resolve);
-        writer.on("error", reject);
-      });
+  await new Promise((res, rej) => {
+    writer.on("finish", res);
+    writer.on("error", rej);
+  });
 
-      // Auto delete after 5 minutes (only large files will still exist)
-      scheduleTemporaryDelete(filePath, 5 * 60 * 1000);
-
-      return filePath;
-    } catch {}
-    await wait(800);
-  }
-
-  throw new Error("Download retry failed");
-}
-
-// ============================
-// AUTO DELETE FILE
-// ============================
-function scheduleTemporaryDelete(filePath, delay) {
   setTimeout(() => {
-    try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        console.log("🗑️ Auto-deleted:", filePath);
-      }
-    } catch (err) {
-      console.error("Delete error:", err);
-    }
-  }, delay);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }, 5 * 60 * 1000);
+
+  return filePath;
 }
 
 // ============================
+function expandUrl(url) {
+  return axios.get(url, {
+    maxRedirects: 0,
+    validateStatus: s => s >= 200 && s < 400
+  }).then(r => r.headers.location || url).catch(() => url);
+}
+
 function wait(ms) {
   return new Promise(res => setTimeout(res, ms));
 }
