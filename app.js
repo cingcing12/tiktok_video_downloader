@@ -43,7 +43,7 @@ const userSchema = new mongoose.Schema({
   joinedAt: { type: Date, default: Date.now }
 });
 
-const User = mongoose.model("User", userSchema);
+const User = mongoose.model("tiktok_bot_user", userSchema);
 
 // ============================
 // EXPRESS SERVER
