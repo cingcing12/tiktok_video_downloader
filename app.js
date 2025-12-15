@@ -23,19 +23,17 @@ if (!TOKEN || !APP_URL || !process.env.MONGO_URI) {
 }
 
 // ============================
-// MONGODB CONNECT
+// MONGODB CONNECT (Mongoose v7+)
 // ============================
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => console.log("✅ MongoDB connected"))
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB connected"))
   .catch(err => {
     console.error("❌ MongoDB error:", err);
     process.exit(1);
   });
 
 // ============================
-// USER SCHEMA (SILENT)
+// USER SCHEMA (SILENT STORAGE)
 // ============================
 const userSchema = new mongoose.Schema({
   userId: { type: Number, unique: true },
@@ -61,19 +59,17 @@ app.get("/video/:file", (req, res) => {
   }
 });
 
-app.listen(PORT, () =>
-  console.log(`🚀 Server running on ${PORT}`)
-);
+app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
 
 // ============================
-// PREVENT SLEEP
+// PREVENT SLEEP (Render.com)
 // ============================
 setInterval(() => {
   axios.get(APP_URL).catch(() => {});
 }, 4 * 60 * 1000);
 
 // ============================
-// BOT (POLLING)
+// TELEGRAM BOT (POLLING)
 // ============================
 const bot = new TelegramBot(TOKEN, { polling: true });
 
@@ -91,7 +87,7 @@ function getChatQueue(chatId) {
 }
 
 // ============================
-// /start (SILENT STORE)
+// /start HANDLER (STORE USER)
 // ============================
 bot.onText(/\/start/, async (msg) => {
   await User.findOneAndUpdate(
@@ -122,9 +118,7 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const queue = getChatQueue(chatId);
 
-  queue.add(() =>
-    globalQueue.add(() => handleDownload(chatId, text))
-  );
+  queue.add(() => globalQueue.add(() => handleDownload(chatId, text)));
 });
 
 // ============================
@@ -222,6 +216,7 @@ async function downloadVideo(videoUrl, chatId) {
     writer.on("error", rej);
   });
 
+  // auto delete after 5 min
   setTimeout(() => {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }, 5 * 60 * 1000);
