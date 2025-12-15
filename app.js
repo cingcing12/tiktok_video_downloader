@@ -8,9 +8,8 @@ const path = require("path");
 const express = require("express");
 const PQueue = require("p-queue").default;
 const mongoose = require("mongoose");
+const cors = require("cors");
 require("dotenv").config();
-const cors = require('cors');
-
 
 // ============================
 // CONFIG
@@ -35,12 +34,12 @@ mongoose.connect(process.env.MONGO_URI)
   });
 
 // ============================
-// USER SCHEMA (STORE NAME)
+// USER SCHEMA
 // ============================
 const userSchema = new mongoose.Schema({
   userId: { type: Number, unique: true },
-  firstName: { type: String },
-  lastName: { type: String },
+  firstName: String,
+  lastName: String,
   lastActive: { type: Date, default: Date.now },
   joinedAt: { type: Date, default: Date.now }
 });
@@ -57,35 +56,30 @@ app.get("/", (req, res) => res.send("🐰 Bot running"));
 
 app.get("/video/:file", (req, res) => {
   const filePath = "/tmp/" + req.params.file;
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).send("File expired or deleted.");
-  }
+  if (fs.existsSync(filePath)) res.sendFile(filePath);
+  else res.status(404).send("File expired or deleted.");
 });
 
-app.get('/user', async (req, res) => {
-  try{
-    const findUser = await User.find();
-    if(findUser){
-      res.status(200).json(findUser);
-    }
-  }catch(err){
-    res.status(500).json('Error');
+app.get("/user", async (req, res) => {
+  try {
+    const users = await User.find().sort({ joinedAt: -1 });
+    res.json(users);
+  } catch {
+    res.status(500).json("Error");
   }
-})
+});
 
 app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
 
 // ============================
-// PREVENT SLEEP (Render.com)
+// PREVENT SLEEP
 // ============================
 setInterval(() => {
   axios.get(APP_URL).catch(() => {});
 }, 4 * 60 * 1000);
 
 // ============================
-// TELEGRAM BOT (POLLING)
+// TELEGRAM BOT
 // ============================
 const bot = new TelegramBot(TOKEN, { polling: true });
 
@@ -103,17 +97,17 @@ function getChatQueue(chatId) {
 }
 
 // ============================
-// /start HANDLER (STORE USER WITH NAME)
+// /start COMMAND
 // ============================
 bot.onText(/\/start/, async (msg) => {
-  const firstName = msg.from.first_name || "";
-  const lastName = msg.from.last_name || "";
+  const { id, first_name, last_name } = msg.from;
 
   await User.findOneAndUpdate(
-    { userId: msg.from.id },
+    { userId: id },
     {
-      firstName,
-      lastName,
+      userId: id,
+      firstName: first_name || "",
+      lastName: last_name || "",
       lastActive: new Date()
     },
     { upsert: true }
@@ -123,14 +117,25 @@ bot.onText(/\/start/, async (msg) => {
 });
 
 // ============================
-// MESSAGE HANDLER (UPDATE lastActive)
+// MESSAGE HANDLER (AUTO STORE USER)
 // ============================
 bot.on("message", async (msg) => {
   if (!msg.from) return;
 
-  await User.updateOne(
-    { userId: msg.from.id },
-    { lastActive: new Date() }
+  const userId = msg.from.id;
+  const firstName = msg.from.first_name || "";
+  const lastName = msg.from.last_name || "";
+
+  // ✅ AUTO STORE USER (EVEN WITHOUT /start)
+  await User.findOneAndUpdate(
+    { userId },
+    {
+      userId,
+      firstName,
+      lastName,
+      lastActive: new Date()
+    },
+    { upsert: true }
   );
 
   const text = msg.text;
@@ -146,9 +151,21 @@ bot.on("message", async (msg) => {
 // COOL LOADING ANIMATION
 // ============================
 async function startLoading(chatId) {
-  const frames = ["⏳ Downloading", "⏳ Downloading.", "⏳ Downloading..", "⏳ Downloading..."];
-  let i = 0;
+  const frames = [
+    "🌑 [░░░░░░░░░░] Downloading",
+    "🌒 [█░░░░░░░░░] Downloading",
+    "🌓 [██░░░░░░░░] Downloading",
+    "🌔 [███░░░░░░░] Downloading",
+    "🌕 [████░░░░░░] Downloading",
+    "🌖 [█████░░░░░] Downloading",
+    "🌗 [██████░░░░] Downloading",
+    "🌘 [███████░░░] Downloading",
+    "🌑 [████████░░] Downloading",
+    "🌒 [█████████░] Downloading",
+    "🌓 [██████████] Downloading"
+  ];
 
+  let i = 0;
   const msg = await bot.sendMessage(chatId, frames[0]);
 
   const interval = setInterval(() => {
@@ -157,13 +174,13 @@ async function startLoading(chatId) {
       message_id: msg.message_id
     }).catch(() => {});
     i++;
-  }, 600);
+  }, 500);
 
   return { msg, interval };
 }
 
 // ============================
-// MAIN DOWNLOAD HANDLER
+// DOWNLOAD HANDLER
 // ============================
 async function handleDownload(chatId, text) {
   const loader = await startLoading(chatId);
@@ -184,17 +201,14 @@ async function handleDownload(chatId, text) {
       fs.unlinkSync(filePath);
     } else {
       const fileName = path.basename(filePath);
-      const downloadUrl = `${APP_URL}/video/${fileName}`;
-
       await bot.sendMessage(
         chatId,
-        `📥 Video ready!\n\n🔗 Download (auto delete in 5 min):\n${downloadUrl}`
+        `📥 Video ready!\n🔗 Download (auto delete in 5 min):\n${APP_URL}/video/${fileName}`
       );
     }
-
-  } catch (err) {
+  } catch {
     clearInterval(loader.interval);
-    await bot.editMessageText("❌ Failed to download. Try again.", {
+    bot.editMessageText("❌ Download failed. Try again.", {
       chat_id: chatId,
       message_id: loader.msg.message_id
     }).catch(() => {});
@@ -207,9 +221,7 @@ async function handleDownload(chatId, text) {
 async function getTikwmVideo(url) {
   for (let i = 0; i < 5; i++) {
     try {
-      const res = await axios.get("https://tikwm.com/api/", {
-        params: { url }
-      });
+      const res = await axios.get("https://tikwm.com/api/", { params: { url } });
       if (res.data?.data?.play) return res;
     } catch {}
     await wait(600);
@@ -223,12 +235,7 @@ async function getTikwmVideo(url) {
 async function downloadVideo(videoUrl, chatId) {
   const filePath = `/tmp/tt_${chatId}_${Date.now()}.mp4`;
 
-  const stream = await axios({
-    url: videoUrl,
-    method: "GET",
-    responseType: "stream"
-  });
-
+  const stream = await axios({ url: videoUrl, responseType: "stream" });
   const writer = fs.createWriteStream(filePath);
   stream.data.pipe(writer);
 
@@ -237,10 +244,7 @@ async function downloadVideo(videoUrl, chatId) {
     writer.on("error", rej);
   });
 
-  setTimeout(() => {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }, 5 * 60 * 1000);
-
+  setTimeout(() => fs.existsSync(filePath) && fs.unlinkSync(filePath), 5 * 60 * 1000);
   return filePath;
 }
 
@@ -255,4 +259,3 @@ function expandUrl(url) {
 function wait(ms) {
   return new Promise(res => setTimeout(res, ms));
 }
-    
