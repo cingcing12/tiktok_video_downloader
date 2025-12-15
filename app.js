@@ -61,6 +61,17 @@ app.get("/video/:file", (req, res) => {
   }
 });
 
+app.get('/user', async (req, res) => {
+  try{
+    const findUser = await User.find();
+    if(findUser){
+      res.status(200).json(findUser);
+    }
+  }catch(err){
+    res.status(500).json('Error');
+  }
+})
+
 app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
 
 // ============================
