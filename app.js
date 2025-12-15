@@ -33,15 +33,17 @@ mongoose.connect(process.env.MONGO_URI)
   });
 
 // ============================
-// USER SCHEMA (SILENT STORAGE)
+// USER SCHEMA (STORE NAME)
 // ============================
 const userSchema = new mongoose.Schema({
   userId: { type: Number, unique: true },
+  firstName: { type: String },
+  lastName: { type: String },
   lastActive: { type: Date, default: Date.now },
   joinedAt: { type: Date, default: Date.now }
 });
 
-const User = mongoose.model("tiktok_bot_user", userSchema);
+const User = mongoose.model("User", userSchema);
 
 // ============================
 // EXPRESS SERVER
@@ -87,12 +89,19 @@ function getChatQueue(chatId) {
 }
 
 // ============================
-// /start HANDLER (STORE USER)
+// /start HANDLER (STORE USER WITH NAME)
 // ============================
 bot.onText(/\/start/, async (msg) => {
+  const firstName = msg.from.first_name || "";
+  const lastName = msg.from.last_name || "";
+
   await User.findOneAndUpdate(
     { userId: msg.from.id },
-    { lastActive: new Date() },
+    {
+      firstName,
+      lastName,
+      lastActive: new Date()
+    },
     { upsert: true }
   );
 
@@ -100,16 +109,14 @@ bot.onText(/\/start/, async (msg) => {
 });
 
 // ============================
-// MESSAGE HANDLER
+// MESSAGE HANDLER (UPDATE lastActive)
 // ============================
 bot.on("message", async (msg) => {
   if (!msg.from) return;
 
-  // silently update activity
   await User.updateOne(
     { userId: msg.from.id },
-    { lastActive: new Date() },
-    { upsert: true }
+    { lastActive: new Date() }
   );
 
   const text = msg.text;
@@ -216,7 +223,6 @@ async function downloadVideo(videoUrl, chatId) {
     writer.on("error", rej);
   });
 
-  // auto delete after 5 min
   setTimeout(() => {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }, 5 * 60 * 1000);
