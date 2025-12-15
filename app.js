@@ -9,6 +9,8 @@ const express = require("express");
 const PQueue = require("p-queue").default;
 const mongoose = require("mongoose");
 require("dotenv").config();
+const cors = require('cors');
+
 
 // ============================
 // CONFIG
@@ -49,6 +51,7 @@ const User = mongoose.model("tiktok_bot_user", userSchema);
 // EXPRESS SERVER
 // ============================
 const app = express();
+app.use(cors());
 
 app.get("/", (req, res) => res.send("🐰 Bot running"));
 
