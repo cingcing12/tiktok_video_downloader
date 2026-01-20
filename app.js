@@ -9,6 +9,7 @@ const express = require("express");
 const PQueue = require("p-queue").default;
 const mongoose = require("mongoose");
 const cors = require("cors");
+const os = require("os"); // <--- ADDED for system info
 require("dotenv").config();
 
 // ============================
@@ -82,6 +83,10 @@ setInterval(() => {
 // TELEGRAM BOT
 // ============================
 const bot = new TelegramBot(TOKEN, { polling: true });
+bot.on("message", (msg) => {
+  // Simple log for incoming messages
+  if (msg.text) console.log(`📩 MSG from ${msg.chat.id}: ${msg.text.substring(0, 20)}...`);
+});
 
 // ============================
 // QUEUES
@@ -126,7 +131,7 @@ bot.on("message", async (msg) => {
   const firstName = msg.from.first_name || "";
   const lastName = msg.from.last_name || "";
 
-  // ✅ AUTO STORE USER (EVEN WITHOUT /start)
+  // ✅ AUTO STORE USER
   await User.findOneAndUpdate(
     { userId },
     {
@@ -192,6 +197,9 @@ async function handleDownload(chatId, text) {
 
     const filePath = await downloadVideo(videoUrl, chatId);
     const sizeMB = fs.statSync(filePath).size / (1024 * 1024);
+    
+    // LOG DOWNLOAD SIZE
+    console.log(`💾 Downloaded: ${sizeMB.toFixed(2)} MB | File: ${filePath}`);
 
     clearInterval(loader.interval);
     await bot.deleteMessage(chatId, loader.msg.message_id).catch(() => {});
@@ -206,7 +214,8 @@ async function handleDownload(chatId, text) {
         `📥 Video ready!\n🔗 Download (auto delete in 5 min):\n${APP_URL}/video/${fileName}`
       );
     }
-  } catch {
+  } catch (err) {
+    console.error("❌ Download Error:", err.message);
     clearInterval(loader.interval);
     bot.editMessageText("❌ Download failed. Try again.", {
       chat_id: chatId,
@@ -249,6 +258,8 @@ async function downloadVideo(videoUrl, chatId) {
 }
 
 // ============================
+// UTILS
+// ============================
 function expandUrl(url) {
   return axios.get(url, {
     maxRedirects: 0,
@@ -259,3 +270,22 @@ function expandUrl(url) {
 function wait(ms) {
   return new Promise(res => setTimeout(res, ms));
 }
+
+// ============================
+// 📊 SYSTEM MONITOR (CONSOLE LOG)
+// ============================
+// This runs every 60 seconds and prints to Render Logs
+setInterval(() => {
+  const memoryUsage = process.memoryUsage();
+  
+  // RSS: Total memory allocated for the process execution
+  const rss = (memoryUsage.rss / 1024 / 1024).toFixed(2);
+  
+  // Heap Used: Memory actually used by variables/objects
+  const heapUsed = (memoryUsage.heapUsed / 1024 / 1024).toFixed(2);
+  
+  // System Free Memory (Approximate)
+  const osFree = (os.freemem() / 1024 / 1024).toFixed(2);
+
+  console.log(`[📊 SYSTEM MONITOR] RSS: ${rss} MB | Heap: ${heapUsed} MB | OS Free: ${osFree} MB`);
+}, 60000);
