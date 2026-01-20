@@ -9,7 +9,7 @@ const express = require("express");
 const PQueue = require("p-queue").default;
 const mongoose = require("mongoose");
 const cors = require("cors");
-const os = require("os"); // <--- ADDED for system info
+const os = require("os");
 require("dotenv").config();
 
 // ============================
@@ -84,7 +84,6 @@ setInterval(() => {
 // ============================
 const bot = new TelegramBot(TOKEN, { polling: true });
 bot.on("message", (msg) => {
-  // Simple log for incoming messages
   if (msg.text) console.log(`📩 MSG from ${msg.chat.id}: ${msg.text.substring(0, 20)}...`);
 });
 
@@ -122,6 +121,33 @@ bot.onText(/\/start/, async (msg) => {
 });
 
 // ============================
+// /checkMemory COMMAND (NEW ✅)
+// ============================
+bot.onText(/\/checkMemory/, (msg) => {
+  const chatId = msg.chat.id;
+  const memoryUsage = process.memoryUsage();
+
+  // RSS: Total memory allocated for the process
+  const rss = (memoryUsage.rss / 1024 / 1024).toFixed(2);
+  // Heap Used: Actual variables/objects
+  const heapUsed = (memoryUsage.heapUsed / 1024 / 1024).toFixed(2);
+  // OS Free: Approximate free memory on server
+  const osFree = (os.freemem() / 1024 / 1024).toFixed(2);
+
+  const stats = `
+📊 <b>Server Memory Status</b>
+
+🧠 <b>RSS (Total):</b> <code>${rss} MB</code>
+📉 <b>Heap (Active):</b> <code>${heapUsed} MB</code>
+🆓 <b>OS Free:</b> <code>${osFree} MB</code>
+
+<i>Note: If RSS > 500MB, Render might restart the bot.</i>
+  `;
+
+  bot.sendMessage(chatId, stats, { parse_mode: "HTML" });
+});
+
+// ============================
 // MESSAGE HANDLER (AUTO STORE USER)
 // ============================
 bot.on("message", async (msg) => {
@@ -131,7 +157,6 @@ bot.on("message", async (msg) => {
   const firstName = msg.from.first_name || "";
   const lastName = msg.from.last_name || "";
 
-  // ✅ AUTO STORE USER
   await User.findOneAndUpdate(
     { userId },
     {
@@ -185,7 +210,7 @@ async function startLoading(chatId) {
 }
 
 // ============================
-// DOWNLOAD HANDLER
+// DOWNLOAD HANDLER (UPDATED WITH STREAMS ✅)
 // ============================
 async function handleDownload(chatId, text) {
   const loader = await startLoading(chatId);
@@ -198,15 +223,22 @@ async function handleDownload(chatId, text) {
     const filePath = await downloadVideo(videoUrl, chatId);
     const sizeMB = fs.statSync(filePath).size / (1024 * 1024);
     
-    // LOG DOWNLOAD SIZE
     console.log(`💾 Downloaded: ${sizeMB.toFixed(2)} MB | File: ${filePath}`);
 
     clearInterval(loader.interval);
     await bot.deleteMessage(chatId, loader.msg.message_id).catch(() => {});
 
     if (sizeMB < 50) {
-      await bot.sendVideo(chatId, filePath, { supports_streaming: true });
-      fs.unlinkSync(filePath);
+      // ✅ MEMORY FIX: Use Stream instead of File Path
+      const fileStream = fs.createReadStream(filePath);
+      
+      await bot.sendVideo(chatId, fileStream, { supports_streaming: true });
+      
+      // Delete file after sending (using timeout to be safe with stream lock)
+      setTimeout(() => {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }, 1000); 
+
     } else {
       const fileName = path.basename(filePath);
       await bot.sendMessage(
@@ -253,6 +285,7 @@ async function downloadVideo(videoUrl, chatId) {
     writer.on("error", rej);
   });
 
+  // Backup delete timer (5 mins)
   setTimeout(() => fs.existsSync(filePath) && fs.unlinkSync(filePath), 5 * 60 * 1000);
   return filePath;
 }
@@ -270,22 +303,3 @@ function expandUrl(url) {
 function wait(ms) {
   return new Promise(res => setTimeout(res, ms));
 }
-
-// ============================
-// 📊 SYSTEM MONITOR (CONSOLE LOG)
-// ============================
-// This runs every 60 seconds and prints to Render Logs
-setInterval(() => {
-  const memoryUsage = process.memoryUsage();
-  
-  // RSS: Total memory allocated for the process execution
-  const rss = (memoryUsage.rss / 1024 / 1024).toFixed(2);
-  
-  // Heap Used: Memory actually used by variables/objects
-  const heapUsed = (memoryUsage.heapUsed / 1024 / 1024).toFixed(2);
-  
-  // System Free Memory (Approximate)
-  const osFree = (os.freemem() / 1024 / 1024).toFixed(2);
-
-  console.log(`[📊 SYSTEM MONITOR] RSS: ${rss} MB | Heap: ${heapUsed} MB | OS Free: ${osFree} MB`);
-}, 60000);
