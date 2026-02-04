@@ -98,7 +98,7 @@ function getChatQueue(chatId) {
 bot.onText(/\/start/, async (msg) => {
   const { id, first_name, last_name } = msg.from;
   await saveUser(id, first_name, last_name);
-  bot.sendMessage(msg.chat.id, "🐰 Send me a TikTok or YouTube link (Ultrafast Mode!)");
+  bot.sendMessage(msg.chat.id, "🐰 Send me a TikTok or YouTube link (Production Ready!)");
 });
 
 bot.onText(/\/checkMemory/, (msg) => {
@@ -144,20 +144,18 @@ async function handleTikTok(chatId, text) {
 }
 
 // ============================
-// HANDLER: YOUTUBE (FAIL-SAFE MODE ✅)
+// HANDLER: YOUTUBE (SYSTEM BINARY FIX ✅)
 // ============================
 async function handleYouTubeFinal(chatId, text) {
   const loader = await startLoading(chatId, "Fetching Best Quality...");
   
-  // Use a unique ID for this download to find the file later
   const uniqueId = `yt_${Date.now()}`;
   
   try {
     console.log("🎬 Starting yt-dlp...");
 
-    // 1. Execute Download (Saving into /tmp with a specific prefix)
     await youtubedl(text, {
-      output: `${uniqueId}.%(ext)s`, // Let yt-dlp decide extension
+      output: `${uniqueId}.%(ext)s`,
       format: 'bestvideo+bestaudio/best',
       mergeOutputFormat: 'mp4',
       ffmpegLocation: ffmpegPath,
@@ -170,13 +168,13 @@ async function handleYouTubeFinal(chatId, text) {
         'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       ]
     }, {
-      cwd: '/tmp' // Run inside /tmp folder
+      cwd: '/tmp',
+      execPath: 'yt-dlp' // ✅ THIS IS THE FIX: Uses the Python installed version
     });
 
     console.log("✅ Download process finished. Scanning for file...");
 
-    // 2. FIND THE FILE
-    // We scan /tmp for any file that starts with our uniqueId
+    // Find the file
     const files = fs.readdirSync('/tmp');
     const downloadedFile = files.find(file => file.startsWith(uniqueId));
 
@@ -187,7 +185,6 @@ async function handleYouTubeFinal(chatId, text) {
     const fullPath = path.join('/tmp', downloadedFile);
     console.log(`🔎 Found file: ${fullPath}`);
 
-    // 3. Send it
     await processAndSend(chatId, fullPath, loader);
 
   } catch (err) {
@@ -199,9 +196,7 @@ async function handleYouTubeFinal(chatId, text) {
 // SHARED: SENDING LOGIC
 // ============================
 async function processAndSend(chatId, filePath, loader) {
-  if (!fs.existsSync(filePath)) {
-    throw new Error("File missing during send.");
-  }
+  if (!fs.existsSync(filePath)) throw new Error("File missing during send.");
 
   const stats = fs.statSync(filePath);
   const sizeMB = stats.size / (1024 * 1024);
@@ -214,7 +209,6 @@ async function processAndSend(chatId, filePath, loader) {
   if (sizeMB < 50) {
     const fileStream = fs.createReadStream(filePath);
     await bot.sendVideo(chatId, fileStream, { supports_streaming: true });
-    // Quick delete
     setTimeout(() => { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 5000);
   } else {
     const fileName = path.basename(filePath);
@@ -223,7 +217,6 @@ async function processAndSend(chatId, filePath, loader) {
       `🎬 <b>High Quality Video Ready!</b>\n📦 Size: <code>${sizeMB.toFixed(2)} MB</code>\n\n🔗 <a href="${APP_URL}/video/${fileName}">Click Here to Download</a>\n\n<i>(Link expires in 15 mins)</i>`,
       { parse_mode: "HTML" }
     );
-    // Long delete
     setTimeout(() => { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 15 * 60 * 1000);
   }
 }
