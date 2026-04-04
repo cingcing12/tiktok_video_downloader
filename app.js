@@ -12,6 +12,7 @@ const cors = require("cors");
 const os = require("os");
 require("dotenv").config();
 
+
 // ============================
 // CONFIG
 // ============================
@@ -210,52 +211,56 @@ async function startLoading(chatId) {
 }
 
 // ============================
-// DOWNLOAD HANDLER (UPDATED WITH STREAMS ✅)
+// DOWNLOAD HANDLER (UPDATED WITH STREAMS & CAPTION ✅)
 // ============================
 async function handleDownload(chatId, text) {
- const loader = await startLoading(chatId);
+  const loader = await startLoading(chatId);
 
- try {
-  const url = await expandUrl(text);
-  const apiRes = await getTikwmVideo(url);
-  const videoUrl = apiRes.data.data.play;
+  try {
+    const url = await expandUrl(text);
+    const apiRes = await getTikwmVideo(url);
+    const videoUrl = apiRes.data.data.play;
 
-  const filePath = await downloadVideo(videoUrl, chatId);
-  const sizeMB = fs.statSync(filePath).size / (1024 * 1024);
-  
-  console.log(`💾 Downloaded: ${sizeMB.toFixed(2)} MB | File: ${filePath}`);
+    const filePath = await downloadVideo(videoUrl, chatId);
+    const sizeMB = fs.statSync(filePath).size / (1024 * 1024);
+    
+    console.log(`💾 Downloaded: ${sizeMB.toFixed(2)} MB | File: ${filePath}`);
 
-  clearInterval(loader.interval);
-  await bot.deleteMessage(chatId, loader.msg.message_id).catch(() => {});
+    clearInterval(loader.interval);
+    await bot.deleteMessage(chatId, loader.msg.message_id).catch(() => {});
 
-  if (sizeMB < 50) {
-   // ✅ MEMORY FIX: Use Stream instead of File Path
-   const fileStream = fs.createReadStream(filePath);
-   
-   await bot.sendVideo(chatId, fileStream, { supports_streaming: true });
-   
-   // Delete file after sending (using timeout to be safe with stream lock)
-   setTimeout(() => {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-   }, 1000); 
+    if (sizeMB < 50) {
+      // ✅ MEMORY FIX: Use Stream instead of File Path
+      const fileStream = fs.createReadStream(filePath);
+      
+      // ✅ ADDED CAPTION HERE
+      await bot.sendVideo(chatId, fileStream, { 
+        supports_streaming: true,
+        caption: `🔗 Original Link:\n${text}` // Sends the link under the video
+      });
+      
+      // Delete file after sending (using timeout to be safe with stream lock)
+      setTimeout(() => {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }, 1000); 
 
-  } else {
-   const fileName = path.basename(filePath);
-   await bot.sendMessage(
-    chatId,
-    `📥 Video ready!\n🔗 Download (auto delete in 5 min):\n${APP_URL}/video/${fileName}`
-   );
+    } else {
+      const fileName = path.basename(filePath);
+      // ✅ ADDED ORIGINAL LINK TO LARGE FILE MESSAGE
+      await bot.sendMessage(
+        chatId,
+        `📥 Video ready!\n🔗 Original: ${text}\n\n⬇️ Download (auto delete in 5 min):\n${APP_URL}/video/${fileName}`
+      );
+    }
+  } catch (err) {
+    console.error("❌ Download Error:", err.message);
+    clearInterval(loader.interval);
+    bot.editMessageText("❌ Download failed. Try again.", {
+      chat_id: chatId,
+      message_id: loader.msg.message_id
+    }).catch(() => {});
   }
- } catch (err) {
-  console.error("❌ Download Error:", err.message);
-  clearInterval(loader.interval);
-  bot.editMessageText("❌ Download failed. Try again.", {
-   chat_id: chatId,
-   message_id: loader.msg.message_id
-  }).catch(() => {});
- }
 }
-
 // ============================
 // TIKWM API
 // ============================
