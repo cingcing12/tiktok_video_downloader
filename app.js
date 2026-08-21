@@ -11,6 +11,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const os = require("os");
 const { exec } = require("child_process");
+const Tiktok = require("@tobyg74/tiktok-api-dl");
 require("dotenv").config();
 
 const TEMP_DIR = path.join(__dirname, 'temp');
@@ -280,76 +281,33 @@ async function handleDownload(chatId, text) {
     }).catch(() => {});
   }
 }
-// ============================
-// TIKWM API
-// ============================
 async function getTikwmVideo(url) {
- console.log(`🔍 Fetching TikWM API for: ${url}`);
- for (let i = 0; i < 5; i++) {
-  try {
-   const res = await axios.post("https://tikwm.com/api/", `url=${encodeURIComponent(url)}`, {
-    headers: {
-     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-     "Content-Type": "application/x-www-form-urlencoded",
-     "Accept": "application/json"
-    },
-    timeout: 10000
-   });
-   
-   if (res.data?.data?.play || res.data?.data?.images) {
-     return res;
-   }
-   console.log(`⚠️ TikWM Attempt ${i+1} empty data:`, JSON.stringify(res.data).substring(0, 200));
-  } catch (err) {
-   console.error(`❌ TikWM Attempt ${i+1} Error:`, err.message);
+  console.log(`🔍 Fetching TikTok data for: ${url}`);
+  
+  // Try version 2 (MusicalDown) and version 3 (SSSTik)
+  const versions = ["v2", "v3", "v1"]; 
+  
+  for (const version of versions) {
+    try {
+      console.log(`🔄 Trying scraper ${version}...`);
+      const response = await Tiktok.Downloader(url, { version });
+      
+      if (response.status === "success" && response.result) {
+        // Format response to match your existing handleDownload logic
+        if (response.result.images && response.result.images.length > 0) {
+          return { data: { data: { images: response.result.images } } };
+        }
+        if (response.result.video) {
+          return { data: { data: { play: response.result.video } } };
+        }
+      }
+    } catch (err) {
+      console.error(`❌ Scraper ${version} failed:`, err.message);
+    }
   }
-  await wait(1000);
- }
- 
- console.log(`🔄 Falling back to TikMate API...`);
- try {
-  const tmRes = await axios.post("https://api.tikmate.app/api/lookup", `url=${encodeURIComponent(url)}`, {
-   headers: {
-    "Origin": "https://tikmate.app",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Content-Type": "application/x-www-form-urlencoded"
-   },
-   timeout: 10000
-  });
-  if (tmRes.data?.success && tmRes.data?.token && tmRes.data?.id) {
-    return { data: { data: { play: `https://tikmate.app/download/${tmRes.data.token}/${tmRes.data.id}.mp4` } } };
-  }
- } catch (err) {
-  console.error(`❌ TikMate Fallback Error:`, err.message);
- }
 
- console.log(`🔄 Ultimate Fallback: Downloading with yt-dlp...`);
- try {
-   const binPath = await ensureYtDlp();
-   return new Promise((resolve, reject) => {
-     exec(`"${binPath}" -j "${url}"`, (err, stdout) => {
-       if (err) {
-         console.error(`❌ yt-dlp Error:`, err.message);
-         return reject(new Error("All APIs and yt-dlp failed"));
-       }
-       try {
-         const info = JSON.parse(stdout);
-         if (info.url) {
-           return resolve({ data: { data: { play: info.url } } });
-         }
-         reject(new Error("No URL found in yt-dlp"));
-       } catch (e) {
-         reject(e);
-       }
-     });
-   });
- } catch (err) {
-   console.error(`❌ yt-dlp Fallback Error:`, err.message);
- }
-
- throw new Error("All APIs failed");
+  throw new Error("All scraper fallbacks failed due to IP block.");
 }
-
 async function ensureYtDlp() {
   const binName = os.platform() === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
   const binPath = path.join(__dirname, binName);
