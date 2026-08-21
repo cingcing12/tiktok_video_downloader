@@ -57,6 +57,7 @@ const User = mongoose.model("tiktok_bot_user", userSchema);
 // ============================
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 app.get("/", (req, res) => res.send("🐰 Bot running"));
 
@@ -72,6 +73,27 @@ app.get("/user", async (req, res) => {
   res.json(users);
  } catch {
   res.status(500).json("Error");
+ }
+});
+
+app.post("/broadcast", async (req, res) => {
+ try {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: "Message is required" });
+
+  const users = await User.find();
+  let count = 0;
+  for (const user of users) {
+   try {
+    await bot.sendMessage(user.userId, message);
+    count++;
+   } catch (err) {
+    console.error(`Failed to send message to ${user.userId}`);
+   }
+  }
+  res.json({ success: true, count });
+ } catch (error) {
+  res.status(500).json({ error: "Broadcast failed" });
  }
 });
 

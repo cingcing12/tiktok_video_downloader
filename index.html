@@ -83,6 +83,12 @@
                     class="glass-card w-full rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all placeholder-slate-500"
                     placeholder="Search by Name or ID...">
             </div>
+            <button onclick="checkStatus()" id="status-btn" class="glass-card px-6 py-3 rounded-xl text-white hover:bg-emerald-500/20 transition-all flex items-center gap-2 group text-emerald-400 border border-emerald-500/30">
+                <svg class="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Check Status
+            </button>
             <button onclick="fetchUsers()" id="refresh-btn" 
                 class="glass-card px-6 py-3 rounded-xl text-white hover:bg-white/10 transition-all flex items-center gap-2 group">
                 <svg class="w-5 h-5 group-hover:animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -120,7 +126,7 @@
             
             try {
                 // In a real scenario, this fetches from your endpoint
-                const response = await fetch('https://tiktok-video-downloader-h202.onrender.com/user');
+                const response = await fetch('https://tiktok-video-downloader-qnay.onrender.com/user');
                 const data = await response.json();
                 
                 // Sort by last active (newest first)
@@ -137,6 +143,36 @@
                 alert("Failed to load users. Is the bot running?");
             } finally {
                 refreshBtn.classList.remove('opacity-50', 'pointer-events-none');
+            }
+        }
+
+        // Broadcast Status Message
+        async function checkStatus() {
+            const btn = document.getElementById('status-btn');
+            const originalText = btn.innerHTML;
+            
+            btn.classList.add('opacity-50', 'pointer-events-none');
+            btn.innerHTML = `<div class="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div> Sending...`;
+            
+            try {
+                const response = await fetch('https://tiktok-video-downloader-qnay.onrender.com/broadcast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: "bot now working perfectly!" })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert(`Message successfully sent to ${data.count} users!`);
+                } else {
+                    alert("Failed to send message.");
+                }
+            } catch (error) {
+                console.error('Error broadcasting:', error);
+                alert("Error connecting to server to send message.");
+            } finally {
+                btn.innerHTML = originalText;
+                btn.classList.remove('opacity-50', 'pointer-events-none');
             }
         }
 
