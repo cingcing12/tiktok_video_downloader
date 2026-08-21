@@ -286,9 +286,10 @@ async function getTikwmVideo(url) {
  console.log(`🔍 Fetching TikWM API for: ${url}`);
  for (let i = 0; i < 5; i++) {
   try {
-   const res = await axios.post("https://tikwm.com/api/", { url }, {
+   const res = await axios.post("https://tikwm.com/api/", `url=${encodeURIComponent(url)}`, {
     headers: {
      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+     "Content-Type": "application/x-www-form-urlencoded",
      "Accept": "application/json"
     },
     timeout: 10000
@@ -303,7 +304,25 @@ async function getTikwmVideo(url) {
   }
   await wait(1000);
  }
- throw new Error("TikWM failed completely after 5 attempts");
+ 
+ console.log(`🔄 Falling back to TikMate API...`);
+ try {
+  const tmRes = await axios.post("https://api.tikmate.app/api/lookup", `url=${encodeURIComponent(url)}`, {
+   headers: {
+    "Origin": "https://tikmate.app",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Content-Type": "application/x-www-form-urlencoded"
+   },
+   timeout: 10000
+  });
+  if (tmRes.data?.success && tmRes.data?.token && tmRes.data?.id) {
+    return { data: { data: { play: `https://tikmate.app/download/${tmRes.data.token}/${tmRes.data.id}.mp4` } } };
+  }
+ } catch (err) {
+  console.error(`❌ TikMate Fallback Error:`, err.message);
+ }
+
+ throw new Error("All APIs failed");
 }
 
 // ============================
