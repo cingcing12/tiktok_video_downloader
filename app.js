@@ -285,7 +285,12 @@ async function handleDownload(chatId, text) {
 async function getTikwmVideo(url) {
  for (let i = 0; i < 5; i++) {
   try {
-   const res = await axios.get("https://tikwm.com/api/", { params: { url } });
+   const res = await axios.get("https://tikwm.com/api/", { 
+    params: { url },
+    headers: {
+     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+   });
    if (res.data?.data?.play || res.data?.data?.images) return res;
   } catch {}
   await wait(600);
@@ -330,7 +335,10 @@ async function downloadVideo(videoUrl, chatId, onProgress) {
 function expandUrl(url) {
  return axios.get(url, {
   maxRedirects: 0,
-  validateStatus: s => s >= 200 && s < 400
+  validateStatus: s => s >= 200 && s < 400,
+  headers: {
+   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  }
  }).then(r => r.headers.location || url).catch(() => url);
 }
 
