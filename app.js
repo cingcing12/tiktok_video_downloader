@@ -338,22 +338,4 @@ function wait(ms) {
  return new Promise(res => setTimeout(res, ms));
 }
 
-// ============================
-// STARTUP BROADCAST
-// ============================
-async function broadcastStartupMessage() {
-  try {
-    const users = await User.find();
-    for (const user of users) {
-      if (user.userId) {
-        bot.sendMessage(user.userId, "✅ The bot has been restarted and is now working!").catch(() => {});
-      }
-    }
-    console.log(`📢 Startup message sent to ${users.length} users.`);
-  } catch (error) {
-    console.error("❌ Failed to broadcast startup message:", error.message);
-  }
-}
 
-// Run broadcast when the bot starts
-setTimeout(broadcastStartupMessage, 2000);
