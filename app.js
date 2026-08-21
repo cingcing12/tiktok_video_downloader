@@ -284,8 +284,8 @@ async function handleDownload(chatId, text) {
 async function getTikwmVideo(url) {
   console.log(`🔍 Fetching TikTok data for: ${url}`);
   
-  // Try version 2 (MusicalDown) and version 3 (SSSTik)
-  const versions = ["v2", "v3", "v1"]; 
+  // Try version 3 (SSSTik) first as its CDN allows Render IPs, then version 2 (MusicalDown)
+  const versions = ["v3", "v2", "v1"]; 
   
   for (const version of versions) {
     try {
@@ -343,7 +343,14 @@ async function ensureYtDlp() {
 async function downloadVideo(videoUrl, chatId, onProgress) {
  const filePath = path.join(TEMP_DIR, `tt_${chatId}_${Date.now()}.mp4`);
 
- const response = await axios({ url: videoUrl, responseType: "stream" });
+ const response = await axios({ 
+   url: videoUrl, 
+   responseType: "stream",
+   headers: {
+     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+     "Referer": "https://www.tiktok.com/"
+   }
+ });
  const totalLength = parseInt(response.headers['content-length'], 10);
  let downloadedLength = 0;
 
@@ -362,6 +369,12 @@ async function downloadVideo(videoUrl, chatId, onProgress) {
   writer.on("finish", res);
   writer.on("error", rej);
  });
+
+ const fileSize = fs.statSync(filePath).size;
+ if (fileSize < 1000) {
+   fs.unlinkSync(filePath);
+   throw new Error("CDN blocked the download (Empty file received). Try another link.");
+ }
 
  // Backup delete timer (5 mins)
  setTimeout(() => fs.existsSync(filePath) && fs.unlinkSync(filePath), 5 * 60 * 1000);
