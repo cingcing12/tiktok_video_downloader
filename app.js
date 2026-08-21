@@ -283,19 +283,28 @@ async function handleDownload(chatId, text) {
 // TIKWM API
 // ============================
 async function getTikwmVideo(url) {
+ console.log(`🔍 Fetching TikWM API for: ${url}`);
  for (let i = 0; i < 5; i++) {
   try {
    const res = await axios.get("https://tikwm.com/api/", { 
     params: { url },
     headers: {
-     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+     "Accept": "application/json"
+    },
+    timeout: 10000
    });
-   if (res.data?.data?.play || res.data?.data?.images) return res;
-  } catch {}
-  await wait(600);
+   
+   if (res.data?.data?.play || res.data?.data?.images) {
+     return res;
+   }
+   console.log(`⚠️ TikWM Attempt ${i+1} empty data:`, JSON.stringify(res.data).substring(0, 200));
+  } catch (err) {
+   console.error(`❌ TikWM Attempt ${i+1} Error:`, err.message);
+  }
+  await wait(1000);
  }
- throw new Error("TikWM failed");
+ throw new Error("TikWM failed completely after 5 attempts");
 }
 
 // ============================
@@ -333,13 +342,22 @@ async function downloadVideo(videoUrl, chatId, onProgress) {
 // UTILS
 // ============================
 function expandUrl(url) {
+ console.log(`🔗 Expanding URL: ${url}`);
  return axios.get(url, {
   maxRedirects: 0,
   validateStatus: s => s >= 200 && s < 400,
   headers: {
    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-  }
- }).then(r => r.headers.location || url).catch(() => url);
+  },
+  timeout: 5000
+ }).then(r => {
+  const finalUrl = r.headers.location || url;
+  console.log(`✅ Expanded to: ${finalUrl}`);
+  return finalUrl;
+ }).catch((err) => {
+  console.error(`❌ Expand URL Error:`, err.message);
+  return url;
+ });
 }
 
 function wait(ms) {
