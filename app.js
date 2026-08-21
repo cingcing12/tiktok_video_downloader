@@ -286,8 +286,7 @@ async function getTikwmVideo(url) {
  console.log(`🔍 Fetching TikWM API for: ${url}`);
  for (let i = 0; i < 5; i++) {
   try {
-   const res = await axios.get("https://tikwm.com/api/", { 
-    params: { url },
+   const res = await axios.post("https://tikwm.com/api/", { url }, {
     headers: {
      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
      "Accept": "application/json"
