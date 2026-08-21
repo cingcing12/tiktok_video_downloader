@@ -293,12 +293,27 @@ async function getTikwmVideo(url) {
       const response = await Tiktok.Downloader(url, { version });
       
       if (response.status === "success" && response.result) {
-        // Format response to match your existing handleDownload logic
-        if (response.result.images && response.result.images.length > 0) {
+        // Format response to match existing handleDownload logic
+        
+        // Handle Images
+        if (response.result.images && Array.isArray(response.result.images) && response.result.images.length > 0) {
           return { data: { data: { images: response.result.images } } };
         }
-        if (response.result.video) {
-          return { data: { data: { play: response.result.video } } };
+        
+        // Handle Video
+        let videoUrl = null;
+        if (version === "v3") {
+          videoUrl = response.result.videoHD || response.result.videoSD || response.result.videoWatermark;
+        } else if (version === "v2" && response.result.video && response.result.video.playAddr) {
+          videoUrl = response.result.video.playAddr[0];
+        } else if (version === "v1" && Array.isArray(response.result.video)) {
+          videoUrl = response.result.video[0];
+        } else if (typeof response.result.video === 'string') {
+          videoUrl = response.result.video;
+        }
+        
+        if (videoUrl) {
+          return { data: { data: { play: videoUrl } } };
         }
       }
     } catch (err) {
