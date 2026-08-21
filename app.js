@@ -10,6 +10,7 @@ const PQueue = require("p-queue").default;
 const mongoose = require("mongoose");
 const cors = require("cors");
 const os = require("os");
+const { exec } = require("child_process");
 require("dotenv").config();
 
 const TEMP_DIR = path.join(__dirname, 'temp');
@@ -322,7 +323,45 @@ async function getTikwmVideo(url) {
   console.error(`❌ TikMate Fallback Error:`, err.message);
  }
 
+ console.log(`🔄 Ultimate Fallback: Downloading with yt-dlp...`);
+ try {
+   const binPath = await ensureYtDlp();
+   return new Promise((resolve, reject) => {
+     exec(`"${binPath}" -j "${url}"`, (err, stdout) => {
+       if (err) {
+         console.error(`❌ yt-dlp Error:`, err.message);
+         return reject(new Error("All APIs and yt-dlp failed"));
+       }
+       try {
+         const info = JSON.parse(stdout);
+         if (info.url) {
+           return resolve({ data: { data: { play: info.url } } });
+         }
+         reject(new Error("No URL found in yt-dlp"));
+       } catch (e) {
+         reject(e);
+       }
+     });
+   });
+ } catch (err) {
+   console.error(`❌ yt-dlp Fallback Error:`, err.message);
+ }
+
  throw new Error("All APIs failed");
+}
+
+async function ensureYtDlp() {
+  const binName = os.platform() === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  const binPath = path.join(__dirname, binName);
+  if (fs.existsSync(binPath)) return binPath;
+  console.log(`📥 Downloading yt-dlp binary for ${os.platform()}...`);
+  const res = await axios.get(`https://github.com/yt-dlp/yt-dlp/releases/latest/download/${binName}`, { responseType: 'stream' });
+  const writer = fs.createWriteStream(binPath);
+  res.data.pipe(writer);
+  await new Promise(r => writer.on('finish', r));
+  if (os.platform() !== 'win32') fs.chmodSync(binPath, '755');
+  console.log(`✅ yt-dlp downloaded and ready!`);
+  return binPath;
 }
 
 // ============================
