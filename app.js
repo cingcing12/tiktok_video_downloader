@@ -12,6 +12,8 @@ const cors = require("cors");
 const os = require("os");
 require("dotenv").config();
 
+const TEMP_DIR = path.join(__dirname, 'temp');
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 // ============================
 // CONFIG
@@ -57,7 +59,7 @@ app.use(cors());
 app.get("/", (req, res) => res.send("🐰 Bot running"));
 
 app.get("/video/:file", (req, res) => {
- const filePath = "/tmp/" + req.params.file;
+ const filePath = path.join(TEMP_DIR, req.params.file);
  if (fs.existsSync(filePath)) res.sendFile(filePath);
  else res.status(404).send("File expired or deleted.");
 });
@@ -179,35 +181,21 @@ bot.on("message", async (msg) => {
 });
 
 // ============================
-// COOL LOADING ANIMATION
+// PROGRESS ANIMATION
 // ============================
 async function startLoading(chatId) {
- const frames = [
-  "🌑 [░░░░░░░░░░] Downloading",
-  "🌒 [█░░░░░░░░░] Downloading",
-  "🌓 [██░░░░░░░░] Downloading",
-  "🌔 [███░░░░░░░] Downloading",
-  "🌕 [████░░░░░░] Downloading",
-  "🌖 [█████░░░░░] Downloading",
-  "🌗 [██████░░░░] Downloading",
-  "🌘 [███████░░░] Downloading",
-  "🌑 [████████░░] Downloading",
-  "🌒 [█████████░] Downloading",
-  "🌓 [██████████] Downloading"
- ];
+ const msg = await bot.sendMessage(chatId, "⏳ Fetching video info...");
+ return { msg };
+}
 
- let i = 0;
- const msg = await bot.sendMessage(chatId, frames[0]);
-
- const interval = setInterval(() => {
-  bot.editMessageText(frames[i % frames.length], {
-   chat_id: chatId,
-   message_id: msg.message_id
-  }).catch(() => {});
-  i++;
- }, 500);
-
- return { msg, interval };
+function updateProgressBar(chatId, messageId, percent) {
+ const filled = Math.floor(percent / 10);
+ const empty = 10 - filled;
+ const bar = '█'.repeat(filled) + '░'.repeat(empty);
+ bot.editMessageText(`📥 [${bar}] ${percent}%\nDownloading...`, {
+  chat_id: chatId,
+  message_id: messageId
+ }).catch(() => {});
 }
 
 // ============================
@@ -219,14 +207,44 @@ async function handleDownload(chatId, text) {
   try {
     const url = await expandUrl(text);
     const apiRes = await getTikwmVideo(url);
-    const videoUrl = apiRes.data.data.play;
+    const data = apiRes.data.data;
 
-    const filePath = await downloadVideo(videoUrl, chatId);
+    // Handle Image Carousel
+    if (data.images && data.images.length > 0) {
+      if (loader.interval) clearInterval(loader.interval);
+      await bot.deleteMessage(chatId, loader.msg.message_id).catch(() => {});
+      
+      const mediaGroup = data.images.map(imgUrl => ({
+        type: 'photo',
+        media: imgUrl
+      }));
+      mediaGroup[0].caption = `🔗 Original Link:\n${text}`;
+      
+      // Send images in chunks of 10 (Telegram limit)
+      for (let i = 0; i < mediaGroup.length; i += 10) {
+        await bot.sendMediaGroup(chatId, mediaGroup.slice(i, i + 10));
+      }
+      return;
+    }
+
+    // Handle Video
+    const videoUrl = data.play;
+
+    let lastUpdate = 0;
+    const filePath = await downloadVideo(videoUrl, chatId, (percent) => {
+      const now = Date.now();
+      // Update max once per second or when hitting 100% to avoid Telegram rate limits
+      if (now - lastUpdate > 1000 || percent === 100) {
+        lastUpdate = now;
+        updateProgressBar(chatId, loader.msg.message_id, percent);
+      }
+    });
+    
     const sizeMB = fs.statSync(filePath).size / (1024 * 1024);
     
     console.log(`💾 Downloaded: ${sizeMB.toFixed(2)} MB | File: ${filePath}`);
 
-    clearInterval(loader.interval);
+    if (loader.interval) clearInterval(loader.interval);
     await bot.deleteMessage(chatId, loader.msg.message_id).catch(() => {});
 
     if (sizeMB < 50) {
@@ -254,7 +272,7 @@ async function handleDownload(chatId, text) {
     }
   } catch (err) {
     console.error("❌ Download Error:", err.message);
-    clearInterval(loader.interval);
+    if (loader.interval) clearInterval(loader.interval);
     bot.editMessageText("❌ Download failed. Try again.", {
       chat_id: chatId,
       message_id: loader.msg.message_id
@@ -268,7 +286,7 @@ async function getTikwmVideo(url) {
  for (let i = 0; i < 5; i++) {
   try {
    const res = await axios.get("https://tikwm.com/api/", { params: { url } });
-   if (res.data?.data?.play) return res;
+   if (res.data?.data?.play || res.data?.data?.images) return res;
   } catch {}
   await wait(600);
  }
@@ -278,12 +296,23 @@ async function getTikwmVideo(url) {
 // ============================
 // DOWNLOAD VIDEO
 // ============================
-async function downloadVideo(videoUrl, chatId) {
- const filePath = `/tmp/tt_${chatId}_${Date.now()}.mp4`;
+async function downloadVideo(videoUrl, chatId, onProgress) {
+ const filePath = path.join(TEMP_DIR, `tt_${chatId}_${Date.now()}.mp4`);
 
- const stream = await axios({ url: videoUrl, responseType: "stream" });
+ const response = await axios({ url: videoUrl, responseType: "stream" });
+ const totalLength = parseInt(response.headers['content-length'], 10);
+ let downloadedLength = 0;
+
+ if (totalLength && onProgress) {
+   response.data.on('data', (chunk) => {
+     downloadedLength += chunk.length;
+     const percent = Math.round((downloadedLength / totalLength) * 100);
+     onProgress(percent);
+   });
+ }
+
  const writer = fs.createWriteStream(filePath);
- stream.data.pipe(writer);
+ response.data.pipe(writer);
 
  await new Promise((res, rej) => {
   writer.on("finish", res);
@@ -308,3 +337,23 @@ function expandUrl(url) {
 function wait(ms) {
  return new Promise(res => setTimeout(res, ms));
 }
+
+// ============================
+// STARTUP BROADCAST
+// ============================
+async function broadcastStartupMessage() {
+  try {
+    const users = await User.find();
+    for (const user of users) {
+      if (user.userId) {
+        bot.sendMessage(user.userId, "✅ The bot has been restarted and is now working!").catch(() => {});
+      }
+    }
+    console.log(`📢 Startup message sent to ${users.length} users.`);
+  } catch (error) {
+    console.error("❌ Failed to broadcast startup message:", error.message);
+  }
+}
+
+// Run broadcast when the bot starts
+setTimeout(broadcastStartupMessage, 2000);
